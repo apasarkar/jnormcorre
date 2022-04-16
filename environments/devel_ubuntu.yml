@@ -15,7 +15,6 @@ dependencies:
     - tifffile
     - typing
     - pynwb
-    - scikit-learn
     - pip
     - pip:
         - "jax[cpu]"

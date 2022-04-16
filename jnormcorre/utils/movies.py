@@ -1,15 +1,11 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-""" Suite of functions that help manage movie data
 
-Contains the movie class.
+""" 
+This file is a modified version of the movies.py file from the CaImAn repository: 
+https://github.com/flatironinstitute/CaImAn/blob/master/caiman/base/movies.py
 
+See README for complete attribution.
 """
 
-# \package caiman/dource_ectraction/cnmf
-# \version   1.0
-# \copyright GNU General Public License v2.0
-# \date Created on Tue Jun 30 20:56:07 2015 , Updated on Fri Aug 19 17:30:11 2016
 
 from builtins import str
 from builtins import range
@@ -22,24 +18,18 @@ import logging
 from matplotlib import animation
 import numpy as np
 import os
-from PIL import Image  # $ pip install pillow
+from PIL import Image  
 import pylab as pl
 import scipy.ndimage
 import scipy
 from scipy.io import loadmat
 from skimage.transform import warp, AffineTransform
 from skimage.feature import match_template
-# import sklearn
-# from sklearn.cluster import KMeans
-# from sklearn.decomposition import NMF, IncrementalPCA, FastICA
-# from sklearn.metrics.pairwise import euclidean_distances
 import sys
 import tifffile
 from tqdm import tqdm
 from typing import Any, Dict, List, Tuple, Union
 import warnings
-# Flip to normal import if this is ever resolved: https://github.com/constantinpape/z5/issues/146
-# import z5py
 from zipfile import ZipFile
 
 from . import timeseries
@@ -52,10 +42,6 @@ except:
 from . import timeseries as ts
 from .traces import trace
 
-# from ..mmapping import load_memmap
-# from ..utils import visualization
-# from .. import summary_images as si
-# from ..motion_correction import apply_shift_online, motion_correct_online
 
 
 
