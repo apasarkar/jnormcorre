@@ -1,0 +1,22 @@
+name: jnormcorre_devel
+channels:
+    - defaults
+    - conda-forge
+dependencies:
+    - python >=3.9
+    - future
+    - numpy
+    - scipy
+    - h5py
+    - tqdm
+    - matplotlib
+    - opencv
+    - jupyterlab
+    - tifffile
+    - typing
+    - pynwb
+    - scikit-learn
+    - pip
+    - pip:
+        - "jax[cpu]"
+        - pillow

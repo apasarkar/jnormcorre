@@ -61,10 +61,11 @@ from typing import List, Optional, Tuple
 from skimage.transform import resize as resize_sk
 from skimage.transform import warp as warp_sk
 
-import caiman as cm
-import caiman.base.movies
-import caiman.paths
-from .mmapping import prepare_shape
+
+import jnormcorre.utils.movies
+from jnormcorre.utils.movies import load, load_iter
+
+import pathlib ##MOVE THIS ONE...
 
 try:
     cv2.setNumThreads(0)
@@ -96,6 +97,150 @@ from functools import partial
 import time
 #%%
 
+
+####PLACE IN FUNCTIONS######
+
+
+def get_file_size(file_name, var_name_hdf5='mov'):
+    """ Computes the dimensions of a file or a list of files without loading
+    it/them in memory. An exception is thrown if the files have FOVs with
+    different sizes
+        Args:
+            file_name: str/filePath or various list types
+                locations of file(s)
+
+            var_name_hdf5: 'str'
+                if loading from hdf5 name of the dataset to load
+
+        Returns:
+            dims: tuple
+                dimensions of FOV
+
+            T: int or tuple of int
+                number of timesteps in each file
+    """
+    if isinstance(file_name, pathlib.Path):
+        # We want to support these as input, but str has a broader set of operations that we'd like to use, so let's just convert.
+	# (specifically, filePath types don't support subscripting)
+        file_name = str(file_name)
+    if isinstance(file_name, str):
+        if os.path.exists(file_name):
+            _, extension = os.path.splitext(file_name)[:2]
+            extension = extension.lower()
+            if extension == '.mat':
+                byte_stream, file_opened = scipy.io.matlab.mio._open_file(file_name, appendmat=False)
+                mjv, mnv = scipy.io.matlab.mio.get_matfile_version(byte_stream)
+                if mjv == 2:
+                    extension = '.h5'
+            if extension in ['.tif', '.tiff', '.btf']:
+                tffl = tifffile.TiffFile(file_name)
+                siz = tffl.series[0].shape
+                T, dims = siz[0], siz[1:]
+            elif extension in ('.avi', '.mkv'):
+                cap = cv2.VideoCapture(file_name)
+                dims = [0, 0]
+                try:
+                    T = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    dims[1] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    dims[0] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                except():
+                    print('Roll back to opencv 2')
+                    T = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT))
+                    dims[1] = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH))
+                    dims[0] = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT))
+            elif extension == '.mmap':
+                filename = os.path.split(file_name)[-1]
+                Yr, dims, T = load_memmap(os.path.join(
+                        os.path.split(file_name)[0], filename))
+            elif extension in ('.h5', '.hdf5', '.nwb'):
+                # FIXME this doesn't match the logic in movies.py:load()
+                # Consider pulling a lot of the "data source" code out into one place
+                with h5py.File(file_name, "r") as f:
+                    kk = list(f.keys())
+                    if len(kk) == 1:
+                        siz = f[kk[0]].shape
+                    elif var_name_hdf5 in f:
+                        if extension == '.nwb':
+                            siz = f[var_name_hdf5]['data'].shape
+                        else:
+                            siz = f[var_name_hdf5].shape
+                    elif var_name_hdf5 in f['acquisition']:
+                        siz = f['acquisition'][var_name_hdf5]['data'].shape
+                    else:
+                        logging.error('The file does not contain a variable' +
+                                      'named {0}'.format(var_name_hdf5))
+                        raise Exception('Variable not found. Use one of the above')
+                T, dims = siz[0], siz[1:]
+            elif extension in ('.n5', '.zarr'):
+                try:
+                    import z5py
+                except:
+                    raise Exception("z5py not available; if you need this use the conda-based setup")
+
+                with z5py.File(file_name, "r") as f:
+                    kk = list(f.keys())
+                    if len(kk) == 1:
+                        siz = f[kk[0]].shape
+                    elif var_name_hdf5 in f:
+                        if extension == '.nwb':
+                            siz = f[var_name_hdf5]['data'].shape
+                        else:
+                            siz = f[var_name_hdf5].shape
+                    elif var_name_hdf5 in f['acquisition']:
+                        siz = f['acquisition'][var_name_hdf5]['data'].shape
+                    else:
+                        logging.error('The file does not contain a variable' +
+                                      'named {0}'.format(var_name_hdf5))
+                        raise Exception('Variable not found. Use one of the above')
+                T, dims = siz[0], siz[1:]
+            elif extension in ('.sbx'):
+                raise ValueError("sbx file type no longer supported")
+            else:
+                raise Exception('Unknown file type')
+            dims = tuple(dims)
+        else:
+            raise Exception('File not found!')
+    elif isinstance(file_name, tuple):
+        dims = load(file_name[0], var_name_hdf5=var_name_hdf5).shape
+        T = len(file_name)
+
+    elif isinstance(file_name, list):
+        if len(file_name) == 1:
+            dims, T = get_file_size(file_name[0], var_name_hdf5=var_name_hdf5)
+        else:
+            dims, T = zip(*[get_file_size(fn, var_name_hdf5=var_name_hdf5)
+                for fn in file_name])
+            if len(set(dims)) > 1:
+                raise Exception('Files have FOVs with different sizes')
+            else:
+                dims = dims[0]
+    else:
+        raise Exception('Unknown input type')
+    return dims, T
+
+
+def memmap_frames_filename(basename: str, dims: Tuple, frames: int, order: str = 'F') -> str:
+    # Some functions calling this have the first part of *their* dims Tuple be the number of frames.
+    # They *must* pass a slice to this so dims is only X, Y, and optionally Z. Frames is passed separately.
+    dimfield_0 = dims[0]
+    dimfield_1 = dims[1]
+    if len(dims) == 3:
+        dimfield_2 = dims[2]
+    else:
+        dimfield_2 = 1
+    return f"{basename}_d1_{dimfield_0}_d2_{dimfield_1}_d3_{dimfield_2}_order_{order}_frames_{frames}_.mmap"
+
+
+def prepare_shape(mytuple: Tuple) -> Tuple:
+    """ This promotes the elements inside a shape into np.uint64. It is intended to prevent overflows
+        with some numpy operations that are sensitive to it, e.g. np.memmap """
+    if not isinstance(mytuple, tuple):
+        raise Exception("Internal error: prepare_shape() passed a non-tuple")
+    return tuple(map(lambda x: np.uint64(x), mytuple))
+
+
+
+####### END OF PLACE IN FUNCTIONS #######
 
 class MotionCorrect(object):
     """
@@ -180,7 +325,7 @@ class MotionCorrect(object):
         """
         if 'ndarray' in str(type(fname)):
             logging.info('Creating file for motion correction "tmp_mov_mot_corr.hdf5"')
-            cm.movie(fname).save('tmp_mov_mot_corr.hdf5')
+            utils.movies.movie(fname).save('tmp_mov_mot_corr.hdf5')
             fname = ['tmp_mov_mot_corr.hdf5']
 
         if not isinstance(fname, list):
@@ -225,8 +370,7 @@ class MotionCorrect(object):
         # TODO: Review the docs here, and also why we would ever return self
         #       from a method that is not a constructor
         if self.min_mov is None:
-            iterator = cm.base.movies.load_iter(self.fname[0],
-                                                var_name_hdf5=self.var_name_hdf5)
+            iterator = load_iter(self.fname[0], var_name_hdf5=self.var_name_hdf5)
             mi = np.inf
             for _ in range(400):
                 try:
@@ -2157,14 +2301,14 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
 
     """
 
-    dims, T = cm.source_extraction.cnmf.utilities.get_file_size(fname, var_name_hdf5=var_name_hdf5)
+    dims, T = get_file_size(fname, var_name_hdf5=var_name_hdf5)
     Ts = np.arange(T)[subidx].shape[0]
     step = Ts // 50
     corrected_slicer = slice(subidx.start, subidx.stop, step + 1)
-    m = cm.load(fname, var_name_hdf5=var_name_hdf5, subindices=corrected_slicer)
+    m = load(fname, var_name_hdf5=var_name_hdf5, subindices=corrected_slicer)
 
     if len(m.shape) < 3:
-        m = cm.load(fname, var_name_hdf5=var_name_hdf5)
+        m = load(fname, var_name_hdf5=var_name_hdf5)
         m = m[corrected_slicer]
         logging.warning("Your original file was saved as a single page " +
                         "file. Consider saving it in multiple smaller files" +
@@ -2379,7 +2523,7 @@ def tile_and_correct_wrapper(params):
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
         shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices = params
 
-    logging.info("The value of max_deviation_rigid now is {}".format(max_deviation_rigid))    
+  
     
     if isinstance(img_name, tuple):
         name, extension = os.path.splitext(img_name[0])[:2]
@@ -2389,7 +2533,7 @@ def tile_and_correct_wrapper(params):
     shift_info = []
 
     load_time = time.time()
-    imgs = cm.load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
+    imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
     imgs = np.array(imgs[(slice(None),) + indices])
     mc = np.zeros(imgs.shape, dtype=np.float32)
     upsample_factor_fft = 10 #Was originally hardcoded...
@@ -2438,7 +2582,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     extension = extension.lower()
     is_fiji = False
 
-    dims, T = cm.source_extraction.cnmf.utilities.get_file_size(fname, var_name_hdf5=var_name_hdf5)
+    dims, T = get_file_size(fname, var_name_hdf5=var_name_hdf5)
     z = np.zeros(dims)
     dims = z[indices].shape
     logging.debug('Number of Splits: {}'.format(splits))
@@ -2468,7 +2612,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     if save_movie:
         if base_name is None:
             base_name = os.path.split(fname)[1][:-4]
-        fname_tot:Optional[str] = caiman.paths.memmap_frames_filename(base_name, dims, T, order)
+        fname_tot:Optional[str] = memmap_frames_filename(base_name, dims, T, order)
         if isinstance(fname, tuple):
             fname_tot = os.path.join(os.path.split(fname[0])[0], fname_tot)
         else:
