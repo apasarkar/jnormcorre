@@ -6,19 +6,12 @@ This software is currently only tested on linux/unix systems, though wider usage
 
 Todo: Add Info on installation via conda/mamba
 
-# Conda installation for developers (ubuntu)
-First install mamba: 
+# Installation for developers (Linux)
+Run:
 
 ```
-conda install -c conda-forge mamba
+pip install jnormcorre
 ```
-
-Next, navigate to the root of this repository and run the following command: 
-```
-mamba env update -f environments/devel_ubuntu.yml
-```
-
-This will create a conda environment, "jnormcorre_devel", which will contain all dependencies. 
 
 ## Use Case
 This implementation is for offline motion correction only. The code is currently set up to use multicore processing via python multiprocessing. GPU/TPU parallelization support will be provided soon. 
