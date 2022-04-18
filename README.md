@@ -4,14 +4,39 @@ This is a Jax-accelerated implementation of normcorre.
 ## Installation
 This software is currently only tested on linux/unix systems, though wider usage may be possible. 
 
-Todo: Add Info on installation via conda/mamba
-
-# Installation for developers (Linux)
 Run:
 
 ```
 pip install jnormcorre
 ```
+
+# Installation for developers (Linux)
+
+First, navigate to the root directory of this repository. 
+
+Make sure you have mamba installed: 
+
+```
+conda install -c conda-forge mamba
+```
+Then install the dependencies of this environment
+
+```
+mamba env update -f environments/devel_ubuntu.yaml
+```
+
+Next, switch to the appropriate conda environment: 
+
+```
+conda activate jnormcorre_devel
+```
+
+Finally, in order to locally install the repository, run: 
+
+```
+pip install .
+```
+
 
 ## Use Case
 This implementation is for offline motion correction only. The code is currently set up to use multicore processing via python multiprocessing. GPU/TPU parallelization support will be provided soon. 
