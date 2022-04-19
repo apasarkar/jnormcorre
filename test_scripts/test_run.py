@@ -126,7 +126,8 @@ def motion_correct():
         'splits_rig': 14,                   # number of splits across time for rigid registration
         'strides': (96, 96),                # how often to start a new patch in pw-rigid registration
         'upsample_factor_grid': 4,          # motion field upsampling factor during FFT shifts
-        'indices': (slice(None), slice(None))  # part of FOV to be corrected
+        'indices': (slice(None), slice(None)),  # part of FOV to be corrected
+        'gSig_filt': None
     }
 
 
@@ -137,6 +138,8 @@ def motion_correct():
     mc_dict['max_deviation_rigid'] = 15
     mc_dict['border_nan'] = 'copy'
     mc_dict['niter_rig'] = 4
+    mc_dict['gSig_filt'] = (10, 10)
+
 
 
 #     target = ["test_data_amol/S9VisualCombine.tiff"]
