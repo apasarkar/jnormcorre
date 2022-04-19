@@ -61,7 +61,7 @@ from typing import List, Optional, Tuple
 from skimage.transform import resize as resize_sk
 from skimage.transform import warp as warp_sk
 
-from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_jax
+from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
 import jnormcorre.utils.movies
 from jnormcorre.utils.movies import load, load_iter
 
@@ -388,7 +388,7 @@ class MotionCorrect(object):
                         break
                 self.min_mov = mi
             else: 
-                self.min_mov = np.array([high_pass_filter_jax(m_, self.filter_kernel)
+                self.min_mov = np.array([high_pass_filter_cv(m_, self.filter_kernel)
                     for m_ in jnormcorre.utils.movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
                                       subindices=slice(400))]).min()
 
@@ -1951,30 +1951,27 @@ def create_weight_matrix_for_blending(img, overlaps, strides):
 
         yield weight_mat
 
-@partial(jit, static_argnums=(3,))
-def tile_and_correct_rigid_1p(img, template, max_shifts,
-                     upsample_factor_fft, add_to_movie, filter_kernel):
+@partial(jit, static_argnums=(4,))
+def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts,
+                     upsample_factor_fft, add_to_movie):
     
     img = jnp.add(img, add_to_movie).astype(jnp.float64)
     template = jnp.add(template, add_to_movie).astype(jnp.float64)
-    
-    img_orig = img + 0
-    img = high_pass_filter_jax(filter_kernel, img_orig)
 
 
     # compute rigid shifts
     rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
-        img, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
+        img_filtered, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
     
     #Second input doesn't matter here
-    sfr_freq, _ = get_freq_comps_jax(img_orig, img_orig) 
+    sfr_freq, _ = get_freq_comps_jax(img, img) 
 
     new_img = apply_shifts_dft_fast_1(sfr_freq, -rigid_shts[0], -rigid_shts[1], diffphase, is_freq=True)
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
-tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, None, None, None, None, None)), \
-                           static_argnums=(3,))
+tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, None, None, None)), \
+                           static_argnums=(4,))
         
         
 @partial(jit, static_argnums=(3,))
@@ -2028,9 +2025,9 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
     product = jnp.array(jnp.meshgrid(first_dim_updated, second_dim_updated)).T.reshape((-1, 2))
     return product  
  
-@partial(jit, static_argnums=(2,3,4,5,7))
-def tile_and_correct_pwrigid_1p(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
-                     max_deviation_rigid, add_to_movie, filter_kernel):
+@partial(jit, static_argnums=(3,4,5,6,8))
+def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
+                     max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
@@ -2084,23 +2081,21 @@ def tile_and_correct_pwrigid_1p(img, template, strides_0, strides_1, overlaps_0,
     img = jnp.array(img).astype(jnp.float64)
     template = jnp.array(template).astype(jnp.float64)
     
-    img_orig = img + 0
-    img = high_pass_filter_jax(filter_kernel, img_orig)
 
-    img = img + add_to_movie
+    img_filtered = img_filtered + add_to_movie
     template = template + add_to_movie
 
     # compute rigid shifts
     rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
-        img, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
+        img_filtered, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
 
     # extract patches
 
     templates = get_patches_jax(template, overlaps[0], overlaps[1], strides[0], strides[1])
     xy_grid = get_xy_grid(template, overlaps[0], overlaps[1], strides[0], strides[1])
-    imgs = get_patches_jax(img, overlaps[0], overlaps[1], strides[0], strides[1])
-    sum_0 = img.shape[0] - strides_0 - overlaps_0
-    sum_1 = img.shape[1] - strides_1 - overlaps_1
+    imgs = get_patches_jax(img_filtered, overlaps[0], overlaps[1], strides[0], strides[1])
+    sum_0 = img_filtered.shape[0] - strides_0 - overlaps_0
+    sum_1 = img_filtered.shape[1] - strides_1 - overlaps_1
     comp_a = sum_0 // strides_0 + 1 + (sum_0 % strides_0 > 0)
     comp_b = sum_1 // strides_1 + 1 + (sum_1 % strides_1 > 0)
     dim_grid = [comp_a, comp_b]
@@ -2128,20 +2123,20 @@ def tile_and_correct_pwrigid_1p(img, template, strides_0, strides_1, overlaps_0,
 
     
 
-    dims = img_orig.shape
+    dims = img.shape
     
     
 
-    x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
-        jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
+    x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img_filtered.shape[1]).astype(
+        jnp.float32), jnp.arange(0., img_filtered.shape[0]).astype(jnp.float32))
     
     shift_img_x_r = shift_img_x.reshape(num_tiles)
     shift_img_x_y = shift_img_y.reshape(num_tiles)
     total_shifts = jnp.stack([shift_img_x_r, shift_img_x_y], axis=1) * -1
-    return img_orig, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts   
+    return img, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts   
    
-tile_and_correct_pwrigid_1p_vmap = jit(vmap(tile_and_correct_pwrigid_1p, in_axes = (0, None, None, None, None, None, None, None, None, None, None)), \
-                           static_argnums=(2,3,4,5,7))    
+tile_and_correct_pwrigid_1p_vmap = jit(vmap(tile_and_correct_pwrigid_1p, in_axes = (0, 0, None, None, None, None, None, None, None, None, None)), \
+                           static_argnums=(3,4,5,6,8))    
 
    
     
@@ -2469,7 +2464,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
     if template is None:
         if filter_kernel is not None:
             m = jnormcorre.utils.movies.movie(
-                np.array([high_pass_filter_jax(filter_kernel, m_) for m_ in m]))
+                np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m]))
             
         if not m.flags['WRITEABLE']:
             m = m.copy()
@@ -2509,7 +2504,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
                                                              num_splits=num_splits_to_process, shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
         
         if filter_kernel is not None:
-            new_templ = high_pass_filter_jax(filter_kernel, new_templ)
+            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
         else:
             new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
 
@@ -2629,7 +2624,7 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
         if filter_kernel is not None:
-            new_templ = high_pass_filter_jax(filter_kernel, new_templ)        
+            new_templ = high_pass_filter_cv(filter_kernel, new_templ)        
         
     total_template = new_templ
     templates = []
@@ -2703,7 +2698,8 @@ def tile_and_correct_wrapper(params):
         if filter_kernel is None: 
             outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, upsample_factor_fft, add_to_movie)
         else:
-            outs = tile_and_correct_rigid_1p_vmap(imgs, template, max_shifts, upsample_factor_fft, add_to_movie, filter_kernel)
+            imgs_filtered = high_pass_batch(filter_kernel, imgs)
+            outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, upsample_factor_fft, add_to_movie)
         mc = outs[0]
         temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
         shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
@@ -2712,8 +2708,9 @@ def tile_and_correct_wrapper(params):
             outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0], overlaps[1], \
                                                                                max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie)
         else:
-            outs = tile_and_correct_pwrigid_1p_vmap(imgs, template, strides[0], strides[1], overlaps[0], overlaps[1], \
-                                                                               max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie, filter_kernel) 
+            imgs_filtered = high_pass_batch(filter_kernel, imgs)
+            outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1], overlaps[0], overlaps[1], \
+                                                                               max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie) 
     
         for k in range(imgs.shape[0]):
             new_img = opencv_interpolation(outs[0][k], outs[0][k].shape, outs[1][k], outs[2][k], outs[3][k], outs[4][k], add_to_movie)

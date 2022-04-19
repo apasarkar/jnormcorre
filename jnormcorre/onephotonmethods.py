@@ -9,11 +9,6 @@ from jax import jit, vmap
 from functools import partial 
 import cv2
 
-@partial(jit)
-def high_pass_filter_jax(full_kernel, img):
-    orig_img = img + 0
-    interm = jax.scipy.signal.convolve(img, full_kernel, mode='valid')
-    return jax.image.resize(interm, orig_img.shape, method = "cubic")
 
 def get_kernel(gSig_filt):
     ksize = tuple([(3 * i) // 2 * 2 + 1 for i in gSig_filt])
@@ -24,4 +19,17 @@ def get_kernel(gSig_filt):
     ker2D[nz] -= ker2D[nz].mean()
     ker2D[zz] = 0
     return ker2D
+
+def high_pass_filter_cv(kernel, img_orig):
+    if img_orig.ndim == 2:  # image
+        return cv2.filter2D(np.array(img_orig, dtype=np.float32),
+                            -1, kernel, borderType=cv2.BORDER_REFLECT)
+    else:  # movie
+        return jnormcorre.utils.movies.movie(np.array([cv2.filter2D(np.array(img, dtype=np.float32),
+                            -1, ker2D, borderType=cv2.BORDER_REFLECT) for img in img_orig]))     
+
+def high_pass_batch(kernel, imgs):
+    return np.array([cv2.filter2D(np.array(img, dtype=np.float32),
+                            -1, kernel, borderType=cv2.BORDER_REFLECT) for img in imgs])
+
 
