@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="jnormcorre",
-    version="0.0.2",
+    version="0.0.3",
     description="Jax-accelerated implementation of normcorre",
     packages=setuptools.find_packages(),
     install_requires=["future","numpy", "scipy", "h5py", "tqdm", "matplotlib", "opencv-python", "tifffile", "typing", "pynwb", "pillow", "scikit-image", "jax[cpu]"],
