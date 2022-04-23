@@ -26,7 +26,7 @@ def high_pass_filter_cv(kernel, img_orig):
                             -1, kernel, borderType=cv2.BORDER_REFLECT)
     else:  # movie
         return jnormcorre.utils.movies.movie(np.array([cv2.filter2D(np.array(img, dtype=np.float32),
-                            -1, ker2D, borderType=cv2.BORDER_REFLECT) for img in img_orig]))     
+                            -1, kernel, borderType=cv2.BORDER_REFLECT) for img in img_orig]))     
 
 def high_pass_batch(kernel, imgs):
     return np.array([cv2.filter2D(np.array(img, dtype=np.float32),
