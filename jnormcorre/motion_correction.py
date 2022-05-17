@@ -2730,6 +2730,16 @@ def tile_and_correct_wrapper(params):
     new_temp = nan_processing(mc)
     return shift_info, idxs, new_temp
 
+def calculate_splits(T, chunk_const=50):
+    '''
+    This is heuristic for splitting the data (for fast parallel computing)
+    '''
+    #Objective: break up the data into chunks of roughly chunk_const frames
+    chunks = math.ceil(T / chunk_const)
+    out = np.array_split(list(range(T)), chunks)  
+    return out
+    
+
 def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
                                 max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
                                 upsample_factor_grid=4, order='F', dview=None, save_movie=True,
@@ -2755,12 +2765,8 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         else:
             rng = range(T)[subidx]
 
-        splits = int(T / 200)+1 #Constant for now, adjust later
-        splits = max(200, splits)
-#         splits = int(T/10) + 1
-        # print("the value of splits is {}".format(splits))
-        idxs = np.array_split(list(rng), splits)
-
+        idxs = calculate_splits(T)
+        
     else:
         idxs = splits
         save_movie = False
