@@ -85,10 +85,11 @@ except:
 
 import jax
 import math
-jax.config.update("jax_platform_name", "cpu")
 
 from jax.config import config
-config.update("jax_enable_x64", True)
+
+## TODO: Check whether enable x64 is worth it
+# config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 from jax import jit, vmap
