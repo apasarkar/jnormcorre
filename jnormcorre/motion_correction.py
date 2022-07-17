@@ -2777,7 +2777,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         else:
             rng = range(T)[subidx]
 
-        idxs = calculate_splits(T)
+        idxs = calculate_splits(T, chunksize=splits)
         
     else:
         idxs = splits
