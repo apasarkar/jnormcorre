@@ -2128,13 +2128,22 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     
     
 
-    x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img_filtered.shape[1]).astype(
-        jnp.float32), jnp.arange(0., img_filtered.shape[0]).astype(jnp.float32))
+    x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
+        jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
+    
+    
+    
+    remap_input_2 = jax.image.resize(shift_img_y.astype(jnp.float32), dims, method="cubic") + x_grid
+    remap_input_1 = jax.image.resize(shift_img_x.astype(jnp.float32), dims, method="cubic") + y_grid
+    m_reg = jax.scipy.ndimage.map_coordinates(img, [remap_input_1, remap_input_2],order=1, mode='nearest')
+    
+
     
     shift_img_x_r = shift_img_x.reshape(num_tiles)
     shift_img_x_y = shift_img_y.reshape(num_tiles)
     total_shifts = jnp.stack([shift_img_x_r, shift_img_x_y], axis=1) * -1
-    return img, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts   
+    return m_reg - add_to_movie, total_shifts   
+
    
 tile_and_correct_pwrigid_1p_vmap = jit(vmap(tile_and_correct_pwrigid_1p, in_axes = (0, 0, None, None, None, None, None, None, None, None, None)), \
                            static_argnums=(3,4,5,6,8))    
@@ -2336,9 +2345,12 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     templates = get_patches_jax(template, overlaps[0], overlaps[1], strides[0], strides[1])
     xy_grid = get_xy_grid(template, overlaps[0], overlaps[1], strides[0], strides[1])
     imgs = get_patches_jax(img, overlaps[0], overlaps[1], strides[0], strides[1])
-    dim_grid = [int((img.shape[0] - strides_0 - overlaps_0) / strides_0 + 0.5) + 1, \
-                     int((img.shape[1] - strides_1 - overlaps_1) / strides_1 + 0.5) + 1]
-    num_tiles = (int((img.shape[0] - strides_0 - overlaps_0) / strides_0 + 0.5) + 1) * (int((img.shape[1] - strides_1 - overlaps_1) / strides_1 + 0.5) + 1)
+    sum_0 = img.shape[0] - strides_0 - overlaps_0
+    sum_1 = img.shape[1] - strides_1 - overlaps_1
+    comp_a = sum_0 // strides_0 + 1 + (sum_0 % strides_0 > 0)
+    comp_b = sum_1 // strides_1 + 1 + (sum_1 % strides_1 > 0)
+    dim_grid = [comp_a, comp_b]
+    num_tiles = comp_a * comp_b
    
     
     
@@ -2370,8 +2382,8 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     
     
     
-    remap_input_1 = jax.image.resize(shift_img_y.astype(jnp.float32), dims, method="nearest") + x_grid
-    remap_input_2 = jax.image.resize(shift_img_x.astype(jnp.float32), dims, method="nearest") + y_grid
+    remap_input_2 = jax.image.resize(shift_img_y.astype(jnp.float32), dims, method="cubic") + x_grid
+    remap_input_1 = jax.image.resize(shift_img_x.astype(jnp.float32), dims, method="cubic") + y_grid
     m_reg = jax.scipy.ndimage.map_coordinates(img, [remap_input_1, remap_input_2],order=1, mode='nearest')
     
 
@@ -2382,7 +2394,7 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     return m_reg - add_to_movie, total_shifts   
 
 
-tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct, in_axes = (0, None, None, None, None, None, None, None, None, None)), \
+tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct_ideal, in_axes = (0, None, None, None, None, None, None, None, None, None)), \
                            static_argnums=(2,3,4,5,7))    
 
 
@@ -2713,11 +2725,10 @@ def tile_and_correct_wrapper(params):
             outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1], overlaps[0], overlaps[1], \
                                                                                max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie) 
     
-        for k in range(imgs.shape[0]):
-            new_img = opencv_interpolation(outs[0][k], outs[0][k].shape, outs[1][k], outs[2][k], outs[3][k], outs[4][k], add_to_movie)
-            mc[k, :, :] = new_img
-        temp_Nones_1 = [None for temp_i in range(outs[5].shape[0])]
-        shift_info.extend(list(zip(np.array(outs[5]), temp_Nones_1, temp_Nones_1)))
+
+        mc = outs[0]
+        temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
+        shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
 
     if out_fname is not None:
         outv = np.memmap(out_fname, mode='r+', dtype=np.float32,
