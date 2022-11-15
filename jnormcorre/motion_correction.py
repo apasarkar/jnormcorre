@@ -37,7 +37,13 @@ Copyright (C) 2011, the scikit-image team
  POSSIBILITY OF SUCH DAMAGE.
 
 """
+import os
+val = len(os.sched_getaffinity(os.getpid()))
+print("the cpu affinity after the process (intro fix) is {}".format(val))
 
+
+import jax
+import torch
 from past.builtins import basestring
 from builtins import zip
 from builtins import map
@@ -66,15 +72,17 @@ import jnormcorre.utils.movies
 from jnormcorre.utils.movies import load, load_iter
 
 import pathlib ##MOVE THIS ONE...
-
-try:
-    cv2.setNumThreads(0)
-except:
-    pass
+from tqdm import tqdm 
+# try:
+#     cv2.setNumThreads(0)
+# except:
+#     pass
 
 from cv2 import dft as fftn
 from cv2 import idft as ifftn
 opencv = True
+
+
 
 
 try:
@@ -83,10 +91,12 @@ except:
     def profile(a): return a
 
 
-import jax
+
 import math
 
 from jax.config import config
+
+
 
 ## TODO: Check whether enable x64 is worth it
 # config.update("jax_enable_x64", True)
@@ -96,6 +106,9 @@ from jax import jit, vmap
 import functools
 from functools import partial
 import time
+
+import multiprocessing
+os.system('taskset -cp 0-%d %s' % (multiprocessing.cpu_count(), os.getpid()))
 #%%
 
 
@@ -230,6 +243,17 @@ def memmap_frames_filename(basename: str, dims: Tuple, frames: int, order: str =
     else:
         dimfield_2 = 1
     return f"{basename}_d1_{dimfield_0}_d2_{dimfield_1}_d3_{dimfield_2}_order_{order}_frames_{frames}_.mmap"
+
+def tiff_frames_filename(basename: str, dims: Tuple, frames: int, order: str = 'F') -> str:
+    # Some functions calling this have the first part of *their* dims Tuple be the number of frames.
+    # They *must* pass a slice to this so dims is only X, Y, and optionally Z. Frames is passed separately.
+    dimfield_0 = dims[0]
+    dimfield_1 = dims[1]
+    if len(dims) == 3:
+        dimfield_2 = dims[2]
+    else:
+        dimfield_2 = 1
+    return f"{basename}_d1_{dimfield_0}_d2_{dimfield_1}_d3_{dimfield_2}_order_{order}_frames_{frames}_.tiff"
 
 
 def prepare_shape(mytuple: Tuple) -> Tuple:
@@ -2665,6 +2689,126 @@ def nan_processing(arr):
     r = jnp.nan_to_num(p, q)
     return r
 
+class tile_and_correct_dataset():
+    def __init__(self, param_list):
+        self.param_list = param_list
+    
+    def __len__(self):
+        print("THE CALCULATED LENGTH OF PARAM LIST IS {}".format(len(self.param_list)))
+        return len(self.param_list)
+    
+    def __getitem__(self, index):
+        img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
+        add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel= self.param_list[index]
+        
+        imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
+        imgs = np.array(imgs[(slice(None),) + indices])
+        mc = np.zeros(imgs.shape, dtype=np.float32)
+        
+        return imgs, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
+        add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel
+ 
+from pdb import set_trace as bp
+
+
+def regular_collate(batch):
+    # print("the type of batch is {}".format(type(batch)))
+    # print("the length of this batch is {}".format(len(batch)))
+    return batch[0]
+
+def tile_and_correct_dataloader(param_list, split_constant=200):
+    """Does motion correction on specified image frames
+
+    Returns:
+    shift_info:
+    idxs:
+    mean_img: mean over all frames of corrected image (to get individ frames, use out_fname to write them to disk)
+
+    Notes:
+    Also writes corrected frames to the mmap file specified by out_fname (if not None)
+
+    """
+    # todo todocument
+
+
+    try:
+        cv2.setNumThreads(0)
+    except:
+        pass  # 'Open CV is naturally single threaded'
+
+    num_workers = 1
+    tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
+    loader_obj= torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
+                                             shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
+    print("THE NUMBER OF WORKERS IS {}".format(num_workers))
+    
+    
+    results_list = []
+    for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
+        num_iters = math.ceil(data[0].shape[0]/split_constant)
+        print("num iters is {}".format(num_iters))
+        print("data shape is {}".format(data[0].shape[0]))
+        print("split const is {}".format(split_constant))
+        imgs_net, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
+        add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = data
+    
+        for j in tqdm(range(num_iters)):
+            
+            start_pt = split_constant * j
+            end_pt = min(data[0].shape[0], start_pt + split_constant)
+            imgs = imgs_net[start_pt:end_pt, :, :]
+            if isinstance(img_name, tuple):
+                name, extension = os.path.splitext(img_name[0])[:2]
+            else:
+                name, extension = os.path.splitext(img_name)[:2]
+            extension = extension.lower()
+            shift_info = []
+
+            load_time = time.time()
+            # imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
+            # imgs = np.array(imgs[(slice(None),) + indices])
+            # mc = np.zeros(imgs.shape, dtype=np.float32)
+            upsample_factor_fft = 10 #Was originally hardcoded...
+
+            if not imgs[0].shape == template.shape:
+                template = template[indices]
+            if max_deviation_rigid == 0:
+                if filter_kernel is None: 
+                    outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, upsample_factor_fft, add_to_movie)
+                else:
+                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
+                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, upsample_factor_fft, add_to_movie)
+                mc[start_pt:end_pt, :, :] = outs[0]
+                temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
+                shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
+            else:
+                if filter_kernel is None:
+                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0], overlaps[1], \
+                                                                                       max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie)
+                else:
+                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
+                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1], overlaps[0], overlaps[1], \
+                                                                                       max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie) 
+
+
+                mc[start_pt:end_pt, :, :] = outs[0]
+                temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
+                shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
+
+        print("At the saving step")
+        if out_fname is not None:
+             tifffile.imwrite(out_fname, mc, append=True, metadata=None)
+        new_temp = nan_processing(mc)
+        
+        results_list.append((shift_info, idxs, new_temp))
+        
+    return results_list
+
+
+
 #%% in parallel
 def tile_and_correct_wrapper(params):
     """Does motion correction on specified image frames
@@ -2790,14 +2934,17 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     if save_movie:
         if base_name is None:
             base_name = os.path.split(fname)[1][:-4]
-        fname_tot:Optional[str] = memmap_frames_filename(base_name, dims, T, order)
+        if dview is None:
+            fname_tot:Optional[str] = tiff_frames_filename(base_name, dims, T, order)
+        else:
+            fname_tot:Optional[str] = memmap_frames_filename(base_name, dims, T, order)
         if isinstance(fname, tuple):
             fname_tot = os.path.join(os.path.split(fname[0])[0], fname_tot)
         else:
             fname_tot = os.path.join(os.path.split(fname)[0], fname_tot)
 
-        np.memmap(fname_tot, mode='w+', dtype=np.float32,
-                  shape=prepare_shape(shape_mov), order=order)
+        # np.memmap(fname_tot, mode='w+', dtype=np.float32,
+        #           shape=prepare_shape(shape_mov), order=order)
         logging.info('Saving file as {}'.format(fname_tot))
     else:
         fname_tot = None
@@ -2821,6 +2968,6 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
             res = dview.map_sync(tile_and_correct_wrapper, pars)
         logging.info('** Finished parallel motion correction **')
     else:
-        res = list(map(tile_and_correct_wrapper, pars))
+        res = tile_and_correct_dataloader(pars)
     print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
