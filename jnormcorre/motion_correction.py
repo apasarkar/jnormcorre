@@ -112,6 +112,83 @@ os.system('taskset -cp 0-%d %s' % (multiprocessing.cpu_count(), os.getpid()))
 #%%
 
 
+
+### General object for motion correction
+## Use case: you have a good template (maybe you run registration on 10K frames, or you used a clever method to find a great template from data. Now you want to register lots of frames to this template. This object is a transparent way to use that functionality from this repo
+class frame_corrector():
+    def __init__(self, corrector, batching=100):
+        '''
+        Inputs: 
+            corrector: jnormcorre motion correction object (jnormcorre.motion_correction). This object stores the necessary info to do motion correction (templates, shifts, overlaps, etc.)
+            batching: number of frames to register at a time. This helps exploit the JIT acceleration of motion correction (via caching) and but more importantly prevents the GPU from being overloaded with frames.
+            register_flag: If this is false, this object does not register data
+        '''
+        
+        if corrector.pw_rigid:
+            self.corr_method = "pwrigid"
+        else:
+            self.corr_method = "rigid"
+        
+        self.max_shifts = corrector.max_shifts
+        
+        self.upsample_factor_fft = 10 ##NOTE: This is a hardcoded value in the original normcorre method, eventually actually treat it like a constant
+        self.add_to_movie = -corrector.min_mov
+        self.strides = corrector.strides
+        self.overlaps = corrector.overlaps
+        self.max_deviation_rigid = corrector.max_deviation_rigid
+        self.batching = batching
+        
+        if self.corr_method == "pwrigid":
+            self.template = corrector.total_template_els
+        elif self.corr_method == "rigid":
+            self.template = corrector.total_template_rig
+            
+        
+        
+    
+    def register_frames(self, frames):
+        '''
+        Inputs: 
+            frames: np.ndarray, dimensions (T, d1, d2), where T is the number of frames and d1, d2 are the FOV dimensions
+        Outputs: 
+            corrected_frames: np.ndarray. Dimensions (T, d1, d2). The registered output from the input (frames)
+        
+        TODO: Add logic to get 
+        '''
+        if self.corr_method == "pwrigid":
+
+            num_iters = math.ceil(frames.shape[0] / self.batching)
+            output_list = [None]*num_iters
+            for k in range(num_iters):
+                start_pt = k * self.batching
+                end_pt = min(start_pt + self.batching, frames.shape[0])
+
+                x = tile_and_correct_pwrigid_vmap(frames[start_pt:end_pt, :, :], self.template, self.strides[0], self.strides[1], \
+                                                                     self.overlaps[0], self.overlaps[1], self.max_shifts,self.upsample_factor_fft, \
+                                                                     self.max_deviation_rigid, self.add_to_movie)[0]
+                output_list[k] = x
+            return output_list
+            
+        
+        elif self.corr_method == "rigid":
+
+            num_iters = math.ceil(frames.shape[0] / self.batching)
+            output_list = [None]*num_iters
+            for k in range(num_iters):
+                start_pt = k * self.batching
+                end_pt = min(start_pt + self.batching, frames.shape[0])
+
+                x = tile_and_correct_rigid_vmap(frames[start_pt:end_pt, :, :], self.template, self.max_shifts, \
+                                                                   self.upsample_factor_fft, self.add_to_movie)[0]
+                output_list[k] = x
+            return output_list
+
+        else:
+            raise ValueError("Invalid corr_method. Must either be pwrigid or rigid")
+        
+
+
+
 ####PLACE IN FUNCTIONS######
 
 
@@ -272,7 +349,7 @@ class MotionCorrect(object):
         class implementing motion correction operations
        """
 
-    def __init__(self, fname, min_mov=None, dview=None, max_shifts=(6, 6), niter_rig=1, splits_rig=14, num_splits_to_process_rig=None,
+    def __init__(self, fname, min_mov=None, dview=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,
                  strides=(96, 96), overlaps=(32, 32), splits_els=14, num_splits_to_process_els=None,
                  upsample_factor_grid=4, max_deviation_rigid=3, shifts_opencv=True, nonneg_movie=True, border_nan=True, pw_rigid=False, num_frames_split=80, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
         """
@@ -294,6 +371,9 @@ class MotionCorrect(object):
            niter_rig':int
                maximum number of iterations rigid motion correction, in general is 1. 0
                will quickly initialize a template with the first frames
+               
+            niter_els:int
+                maximum number of iterations of piecewise rigid motion correction. Default value of 1
 
            splits_rig': int
             for parallelization split the movies in  num_splits chuncks across time
@@ -362,6 +442,7 @@ class MotionCorrect(object):
         self.dview = dview
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
+        self.niter_els = niter_els
         self.splits_rig = splits_rig
         self.num_splits_to_process_rig = num_splits_to_process_rig
         self.strides = strides
@@ -427,7 +508,9 @@ class MotionCorrect(object):
             b0 = np.ceil(np.max(np.abs(self.shifts_rig)))
         self.border_to_0 = b0.astype(np.int)
         self.mmap_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
-        return self
+        
+        frame_correction_obj = frame_corrector(self)
+        return frame_correction_obj
 
     def motion_correct_rigid(self, template=None, save_movie=False) -> None:
         """
@@ -507,7 +590,7 @@ class MotionCorrect(object):
             Exception: 'Error: Template contains NaNs, Please review the parameters'
         """
 
-        num_iter = 1
+        num_iter = self.niter_els
         if template is None:
             logging.info('Generating template by rigid motion correction')
             self.motion_correct_rigid()
@@ -527,7 +610,7 @@ class MotionCorrect(object):
                     name_cur, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
                     dview=self.dview, upsample_factor_grid=self.upsample_factor_grid,
                     max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
-                    num_splits_to_process=None, num_iter=num_iter, template=self.total_template_els,
+                    num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
                     shifts_opencv=self.shifts_opencv, save_movie=save_movie, nonneg_movie=self.nonneg_movie, border_nan=self.border_nan, var_name_hdf5=self.var_name_hdf5, indices=self.indices, filter_kernel=self.filter_kernel)
 
             if show_template:
@@ -2300,7 +2383,7 @@ def opencv_interpolation(img, dims, shift_img_x, shift_img_y, x_grid, y_grid, ad
     
 #Long term we want this function to work; right now jax does not have higher-order spline implemented 
 # so we cannot use this function (which uses first order spline for interpolation...
-@partial(jit, static_argnums=(2,3,4,5,7))
+# @partial(jit, static_argnums=(2,3,4,5,7))
 def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
                      max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
@@ -2738,7 +2821,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
     except:
         pass  # 'Open CV is naturally single threaded'
 
-    num_workers = 1
+    num_workers = 0
     tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
     loader_obj= torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
@@ -2748,14 +2831,11 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
     results_list = []
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
         num_iters = math.ceil(data[0].shape[0]/split_constant)
-        print("num iters is {}".format(num_iters))
-        print("data shape is {}".format(data[0].shape[0]))
-        print("split const is {}".format(split_constant))
         imgs_net, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
         shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = data
     
-        for j in tqdm(range(num_iters)):
+        for j in range(num_iters):
             
             start_pt = split_constant * j
             end_pt = min(data[0].shape[0], start_pt + split_constant)
@@ -2768,9 +2848,6 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
             shift_info = []
 
             load_time = time.time()
-            # imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
-            # imgs = np.array(imgs[(slice(None),) + indices])
-            # mc = np.zeros(imgs.shape, dtype=np.float32)
             upsample_factor_fft = 10 #Was originally hardcoded...
 
             if not imgs[0].shape == template.shape:
@@ -2798,7 +2875,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
                 temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
                 shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
 
-        print("At the saving step")
+
         if out_fname is not None:
              tifffile.imwrite(out_fname, mc, append=True, metadata=None)
         new_temp = nan_processing(mc)
@@ -2928,6 +3005,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     
     shape_mov = (np.prod(dims), T)
     if num_splits is not None:
+        num_splits = min(num_splits, len(idxs))
         idxs = np.array(idxs)[np.random.randint(0, len(idxs), num_splits)]
         save_movie = False
 
