@@ -3021,8 +3021,6 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         else:
             fname_tot = os.path.join(os.path.split(fname)[0], fname_tot)
 
-        # np.memmap(fname_tot, mode='w+', dtype=np.float32,
-        #           shape=prepare_shape(shape_mov), order=order)
         logging.info('Saving file as {}'.format(fname_tot))
     else:
         fname_tot = None
