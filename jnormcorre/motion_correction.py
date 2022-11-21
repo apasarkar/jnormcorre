@@ -507,7 +507,7 @@ class MotionCorrect(object):
             self.motion_correct_rigid(template=template, save_movie=save_movie)
             b0 = np.ceil(np.max(np.abs(self.shifts_rig)))
         self.border_to_0 = b0.astype(np.int)
-        self.mmap_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
+        self.target_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
         
         frame_correction_obj = frame_corrector(self)
         return frame_correction_obj
