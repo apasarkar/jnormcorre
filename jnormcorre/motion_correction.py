@@ -2822,6 +2822,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
         pass  # 'Open CV is naturally single threaded'
 
     num_workers = 0
+    prefetch_factor = 0
     tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
     loader_obj= torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
@@ -2970,6 +2971,20 @@ def calculate_splits(T, splits):
     out = np.array_split(list(range(T)), splits)
     return out
 
+def load_split_heuristic(d1, d2, T):
+    '''
+    Heuristic for determining how many frames to register at a time (to avoid GPU OOM)
+    '''
+    
+    if d1 > 400 or d2 > 400:
+        print("WE ARE USING size 20")
+        new_T = 20
+    else:
+        print("WE ARE USING 200")
+        new_T = 200
+    
+    return min(T, new_T)
+
 def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
                                 max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
                                 upsample_factor_grid=4, order='F', dview=None, save_movie=True,
@@ -3044,6 +3059,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
             res = dview.map_sync(tile_and_correct_wrapper, pars)
         logging.info('** Finished parallel motion correction **')
     else:
-        res = tile_and_correct_dataloader(pars)
+        split_constant = load_split_heuristic(dims[0], dims[1], T)
+        res = tile_and_correct_dataloader(pars, split_constant=split_constant)
     print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
