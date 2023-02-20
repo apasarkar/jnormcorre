@@ -108,8 +108,6 @@ from functools import partial
 import time
 
 import multiprocessing
-os.system('taskset -cp 0-%d %s' % (multiprocessing.cpu_count(), os.getpid()))
-#%%
 
 
 
