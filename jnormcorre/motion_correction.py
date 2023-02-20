@@ -38,8 +38,6 @@ Copyright (C) 2011, the scikit-image team
 
 """
 import os
-val = len(os.sched_getaffinity(os.getpid()))
-print("the cpu affinity after the process (intro fix) is {}".format(val))
 
 
 import jax
