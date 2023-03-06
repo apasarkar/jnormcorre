@@ -54,7 +54,7 @@ import gc
 import h5py
 import itertools
 import logging
-logging.basicConfig(level = logging.INFO)
+logging.basicConfig(level = logging.ERROR)
 import numpy as np
 from numpy.fft import ifftshift
 import os
@@ -174,8 +174,7 @@ class frame_corrector():
                 start_pt = k * self.batching
                 end_pt = min(start_pt + self.batching, frames.shape[0])
 
-                x = tile_and_correct_rigid_vmap(frames[start_pt:end_pt, :, :], self.template, self.max_shifts, \
-                                                                   self.upsample_factor_fft, self.add_to_movie)[0]
+                x = tile_and_correct_rigid_vmap(frames[start_pt:end_pt, :, :], self.template, self.max_shifts, self.add_to_movie)[0]
                 output_list[k] = x
             return output_list
 
@@ -714,7 +713,7 @@ def _upsampled_dft_full(data, upsampled_region_size, upsample_factor, axis_offse
 def _upsampled_dft_no_size(data, upsample_factor):
     return np.array(_upsampled_dft_jax_no_size(data, upsample_factor))
 
-@partial(jit, static_argnums=(1,))
+# @partial(jit, static_argnums=(1,))
 def _upsampled_dft_jax(data, upsampled_region_size,
                    upsample_factor, axis_offsets):
     """
@@ -928,7 +927,7 @@ def _upsampled_dft_jax_no_size(data, upsample_factor):
 
 ### CODE FOR REGISTER TRANSLATION FIRST CALL
 
-@partial(jit)
+# @partial(jit)
 def _compute_phasediff(cross_correlation_max):
     '''
     Compute global phase difference between the two images (should be zero if images are non-negative).
@@ -948,10 +947,10 @@ def get_freq_comps(src_image, target_image):
 # def format_array(x):
 #     return np.array([np.real(x), np.imag(x)])
 
-@partial(jit)
+# @partial(jit)
 def get_freq_comps_jax(src_image, target_image):
-    src_image_cpx = jnp.complex128(src_image)
-    target_image_cpx = jnp.complex128(target_image)
+    src_image_cpx = jnp.complex64(src_image)
+    target_image_cpx = jnp.complex64(target_image)
     src_freq = jnp.fft.fftn(src_image_cpx)
     src_freq = jnp.divide(src_freq, jnp.size(src_freq))
     target_freq = jnp.fft.fftn(target_image_cpx)
@@ -959,7 +958,7 @@ def get_freq_comps_jax(src_image, target_image):
     return src_freq, target_freq
 
 
-@partial(jit)
+# @partial(jit)
 def threshold_dim1(img, ind):
     a = img.shape[0]
     
@@ -971,7 +970,7 @@ def threshold_dim1(img, ind):
     broadcasted = jnp.broadcast_to(jnp.expand_dims(prod, axis = 1), img.shape)
     return broadcasted * img
 
-@partial(jit)
+# @partial(jit)
 def threshold_dim2(img, ind):
     b = img.shape[1]
     
@@ -983,16 +982,16 @@ def threshold_dim2(img, ind):
     broadcasted = jnp.broadcast_to(jnp.expand_dims(prod, axis=0), img.shape)
     return img * broadcasted
 
-@partial(jit)
+# @partial(jit)
 def subtract_values(a, b):
     return a - b
 
-@partial(jit)
+# @partial(jit)
 def return_identity(a, b):
     return a
 
 
-@partial(jit, static_argnums=(2,))
+# @partial(jit, static_argnums=(2,))
 def register_translation_jax_simple(src_image, target_image, upsample_factor, max_shifts=(10, 10)):
     """
 
@@ -1107,7 +1106,7 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     midpoints = jnp.array([jnp.fix(shape[0]/2), jnp.fix(shape[1]/2)])
 
     
-    shifts = jnp.array(maxima, dtype=jnp.float64)
+    shifts = jnp.array(maxima, dtype=jnp.float32)
 
     first_shift = jax.lax.cond(shifts[0] > midpoints[0], subtract_values, return_identity, *(shifts[0], shape[0]))
     second_shift = jax.lax.cond(shifts[1] > midpoints[1], subtract_values, return_identity, *(shifts[1], shape[1]))
@@ -1118,7 +1117,7 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     upsampled_region_size = int(upsample_factor*1.5 + 0.5)
     # Center of output array at dftshift + 1
     dftshift = jnp.fix(upsampled_region_size/ 2.0)
-    upsample_factor = jnp.array(upsample_factor, dtype=jnp.float64)
+    upsample_factor = jnp.array(upsample_factor, dtype=jnp.float32)
     normalization = (src_freq.size * upsample_factor ** 2)
     # Matrix multiply DFT around the current shift estimate
     sample_region_offset = dftshift - shifts * upsample_factor
@@ -1132,7 +1131,7 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     maxima = jnp.array(jnp.unravel_index(
         jnp.argmax(jnp.abs(cross_correlation)),
         cross_correlation.shape),
-        dtype=jnp.float64)
+        dtype=jnp.float32)
     maxima -= dftshift
     shifts = shifts + maxima / upsample_factor
     CCmax = cross_correlation.max()
@@ -1435,7 +1434,7 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
     
     midpoints = jnp.array([jnp.fix(shape[0]/2), jnp.fix(shape[1]/2)])
     
-    shifts = jnp.array(maxima, dtype=jnp.float64)
+    shifts = jnp.array(maxima, dtype=jnp.float32)
 
     first_shift = jax.lax.cond(shifts[0] > midpoints[0], subtract_values, return_identity, *(shifts[0], shape[0]))
     second_shift = jax.lax.cond(shifts[1] > midpoints[1], subtract_values, return_identity, *(shifts[1], shape[1]))
@@ -1446,7 +1445,7 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
     upsampled_region_size = int(upsample_factor*1.5 + 0.5)
     # Center of output array at dftshift + 1
     dftshift = jnp.fix(upsampled_region_size/ 2.0)
-    upsample_factor = jnp.array(upsample_factor, dtype=jnp.float64)
+    upsample_factor = jnp.array(upsample_factor, dtype=jnp.float32)
     normalization = (src_freq.size * upsample_factor ** 2)
     # Matrix multiply DFT around the current shift estimate
     sample_region_offset = dftshift - shifts * upsample_factor
@@ -1460,7 +1459,7 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
     maxima = jnp.array(jnp.unravel_index(
         jnp.argmax(jnp.abs(cross_correlation)),
         cross_correlation.shape),
-        dtype=jnp.float64)
+        dtype=jnp.float32)
     maxima -= dftshift
     shifts = shifts + maxima / upsample_factor
     CCmax = cross_correlation.max()
@@ -1614,7 +1613,7 @@ def register_translation(src_image, target_image, upsample_factor=1,
     midpoints = np.array([np.fix(old_div(axis_size, 2))
                           for axis_size in shape])
 
-    shifts = np.array(maxima, dtype=np.float64)
+    shifts = np.array(maxima, dtype=np.float32)
     shifts[shifts > midpoints] -= np.array(shape)[shifts > midpoints]
 
     if upsample_factor == 1:
@@ -1630,7 +1629,7 @@ def register_translation(src_image, target_image, upsample_factor=1,
         upsampled_region_size = np.ceil(upsample_factor * 1.5)
         # Center of output array at dftshift + 1
         dftshift = np.fix(old_div(upsampled_region_size, 2.0))
-        upsample_factor = np.array(upsample_factor, dtype=np.float64)
+        upsample_factor = np.array(upsample_factor, dtype=np.float32)
         normalization = (src_freq.size * upsample_factor ** 2)
         # Matrix multiply DFT around the current shift estimate
         sample_region_offset = dftshift - shifts * upsample_factor
@@ -1644,7 +1643,7 @@ def register_translation(src_image, target_image, upsample_factor=1,
         maxima = np.array(np.unravel_index(
             np.argmax(np.abs(cross_correlation)),
             cross_correlation.shape),
-            dtype=np.float64)
+            dtype=np.float32)
         maxima -= dftshift
         shifts = shifts + old_div(maxima, upsample_factor)
         CCmax = cross_correlation.max()
@@ -1824,12 +1823,12 @@ def first_value(a, b):
 def second_value(a, b):
     return b
 
-@partial(jit)
+# @partial(jit)
 def ceil_max(a, b):
     interm = jax.lax.cond(a<b, second_value, first_value, a,b)
     return jnp.ceil(interm)
 
-@partial(jit)
+# @partial(jit)
 def floor_min(a, b):
     interm = jax.lax.cond(a>b, second_value, first_value, a,b)
     return jnp.fix(interm)
@@ -1837,8 +1836,8 @@ def floor_min(a, b):
 def apply_shifts_dft(src_freq, shifts, diffphase, is_freq=True):
     return np.array(apply_shifts_dft_fast_1(src_freq, shifts[0], shifts[1], diffphase, is_freq))
 
-@partial(jit)
-def apply_shifts_dft_fast_1(src_freq, shift_a, shift_b, diffphase, is_freq):
+# @partial(jit)
+def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
     """
     adapted from SIMA (https://github.com/losonczylab) and the
     scikit-image (http://scikit-image.org/) package.
@@ -1884,7 +1883,7 @@ def apply_shifts_dft_fast_1(src_freq, shift_a, shift_b, diffphase, is_freq):
     """
 
 
-    src_freq = update_src_freq_flag(src_freq, is_freq)
+    src_freq = jnp.complex64(src_freq_in)
     
 
 
@@ -1905,58 +1904,58 @@ def apply_shifts_dft_fast_1(src_freq, shift_a, shift_b, diffphase, is_freq):
 
     
 
-    max_h = ceil_max(shift_a, 0.).astype('int')
-    max_w = ceil_max(shift_b, 0.).astype('int')
-    min_h = floor_min(shift_a, 0.).astype('int')
-    min_w = floor_min(shift_b, 0.).astype('int')
+    max_h = ceil_max(shift_a, 0.).astype(jnp.int32)
+    max_w = ceil_max(shift_b, 0.).astype(jnp.int32)
+    min_h = floor_min(shift_a, 0.).astype(jnp.int32)
+    min_w = floor_min(shift_b, 0.).astype(jnp.int32)
     
     
     
-    new_img = fill_maxh(new_img, max_h)
-    new_img = jax.lax.cond(min_h < 0, fill_minh, return_identity_mins, *(new_img, min_h))
-    new_img = jax.lax.cond(max_w > 0, fill_maxw, return_identity_mins, *(new_img, max_w))
-    new_img = jax.lax.cond(min_w < 0, fill_minw, return_identity_mins, *(new_img, min_w))
+    new_img_1 = fill_maxh(new_img, max_h)
+    new_img_2 = jax.lax.cond(min_h < 0, fill_minh, return_identity_mins, *(new_img_1, min_h))
+    new_img_3 = jax.lax.cond(max_w > 0, fill_maxw, return_identity_mins, *(new_img_2, max_w))
+    new_img_4 = jax.lax.cond(min_w < 0, fill_minw, return_identity_mins, *(new_img_3, min_w))
 
-    return new_img
+    return new_img_4
 
 
 
-@partial(jit)
+# @partial(jit)
 def fill_minw(img, k):
     x, y = img.shape
     key = y + k
     
-    filter_mat = (jnp.arange(y) < key).astype('int')
+    filter_mat = (jnp.arange(y) < key).astype(jnp.int32)
     filter_mat = jnp.broadcast_to(filter_mat, (x,y))
     
     img_filter = filter_mat * img
     
-    addend = (jnp.arange(y) >= key).astype('int')
+    addend = (jnp.arange(y) >= key).astype(jnp.int32)
     addend = jnp.broadcast_to(addend, (x,y))
     addend = addend * img[:, k-1, None]
     
     return img_filter + addend
 
 
-@partial(jit)
+# @partial(jit)
 def fill_maxw(img, k):
     x,y = img.shape
-    filter_mat = (jnp.arange(y) >= k).astype('int')
+    filter_mat = (jnp.arange(y) >= k).astype(jnp.int32)
     filter_mat = jnp.broadcast_to(filter_mat, (x,y))
     
     img_filtered = filter_mat * img
     
-    addend = (jnp.arange(y) < k).astype('int')
+    addend = (jnp.arange(y) < k).astype(jnp.int32)
     addend = jnp.broadcast_to(addend, (x,y))
     addend = addend * img[:, k, None]
     
     return img_filtered + addend
 
 
-@partial(jit)
+# @partial(jit)
 def fill_maxh(img, k):
     x, y = img.shape
-    filter_mat = jnp.reshape((jnp.arange(x) >= k), (-1, 1)).astype('int')
+    filter_mat = jnp.reshape((jnp.arange(x) >= k), (-1, 1)).astype(jnp.int32)
     filter_mat = jnp.broadcast_to(filter_mat, (x, y))
     img_filtered = img * filter_mat
     
@@ -1966,23 +1965,23 @@ def fill_maxh(img, k):
     return addend_binary + img_filtered
 
 
-@partial(jit)
+# @partial(jit)
 def fill_minh(img, k):
     x, y = img.shape
     key = x + k
-    filtered_mat = jnp.reshape((jnp.arange(x) < key), (-1, 1)).astype('int')
+    filtered_mat = jnp.reshape((jnp.arange(x) < key), (-1, 1)).astype(jnp.int32)
     filtered_mat = jnp.broadcast_to(filtered_mat, (x, y))
     
     filtered_img = img * filtered_mat
     
-    addend = jnp.reshape((jnp.arange(x) >= key), (-1, 1)).astype('int')
+    addend = jnp.reshape((jnp.arange(x) >= key), (-1, 1)).astype(jnp.int32)
     addend = jnp.broadcast_to(addend, (x,y))
     addend_final = addend * img[key-1]
     
     return filtered_img + addend_final
 
 
-@partial(jit)
+# @partial(jit)
 def return_identity_mins(in_var, k):
     return in_var
 
@@ -2055,12 +2054,12 @@ def create_weight_matrix_for_blending(img, overlaps, strides):
 
         yield weight_mat
 
-@partial(jit, static_argnums=(4,))
-def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts,
-                     upsample_factor_fft, add_to_movie):
+# @partial(jit, static_argnums=(4,))
+def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_movie):
     
-    img = jnp.add(img, add_to_movie).astype(jnp.float64)
-    template = jnp.add(template, add_to_movie).astype(jnp.float64)
+    upsample_factor_fft = 10
+    img = jnp.add(img, add_to_movie).astype(jnp.float32)
+    template = jnp.add(template, add_to_movie).astype(jnp.float32)
 
 
     # compute rigid shifts
@@ -2070,31 +2069,30 @@ def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts,
     #Second input doesn't matter here
     sfr_freq, _ = get_freq_comps_jax(img, img) 
 
-    new_img = apply_shifts_dft_fast_1(sfr_freq, -rigid_shts[0], -rigid_shts[1], diffphase, is_freq=True)
+    new_img = apply_shifts_dft_fast_1(sfr_freq, -rigid_shts[0], -rigid_shts[1], diffphase)
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
-tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, None, None, None)), \
-                           static_argnums=(4,))
+tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, None, None, None)))
         
         
-@partial(jit, static_argnums=(3,))
-def tile_and_correct_rigid(img, template, max_shifts,
-                     upsample_factor_fft, add_to_movie):
+# @partial(jit, static_argnums=(3,))
+def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
     
-    img = jnp.add(img, add_to_movie).astype(jnp.float64)
-    template = jnp.add(template, add_to_movie).astype(jnp.float64)
+    upsample_factor_fft = 10
+    
+    img = jnp.add(img, add_to_movie).astype(jnp.float32)
+    template = jnp.add(template, add_to_movie).astype(jnp.float32)
 
     # compute rigid shifts
     rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
         img, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
 
-    new_img = apply_shifts_dft_fast_1(sfr_freq, -rigid_shts[0], -rigid_shts[1], diffphase, is_freq=True)
+    new_img = apply_shifts_dft_fast_1(sfr_freq, -rigid_shts[0], -rigid_shts[1], diffphase)
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
-tile_and_correct_rigid_vmap = jit(vmap(tile_and_correct_rigid, in_axes=(0, None, None, None, None)), \
-                           static_argnums=(3,))
+tile_and_correct_rigid_vmap = jit(vmap(tile_and_correct_rigid, in_axes=(0, None, None, None)))
  
 
 @partial(jit, static_argnums=(1,2,3,4))
@@ -2182,8 +2180,8 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     strides = [strides_0, strides_1]
     overlaps = [overlaps_0, overlaps_1]
 
-    img = jnp.array(img).astype(jnp.float64)
-    template = jnp.array(template).astype(jnp.float64)
+    img = jnp.array(img).astype(jnp.float32)
+    template = jnp.array(template).astype(jnp.float32)
     
 
     img_filtered = img_filtered + add_to_movie
@@ -2306,9 +2304,8 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
     strides = [strides_0, strides_1]
     overlaps = [overlaps_0, overlaps_1]
 
-#     img = img.astype(np.float64).copy()
-    img = jnp.array(img).astype(jnp.float64)
-    template = jnp.array(template).astype(jnp.float64)
+    img = jnp.array(img).astype(jnp.float32)
+    template = jnp.array(template).astype(jnp.float32)
 
     img = img + add_to_movie
     template = template + add_to_movie
@@ -2432,9 +2429,8 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     strides = [strides_0, strides_1]
     overlaps = [overlaps_0, overlaps_1]
 
-#     img = img.astype(np.float64).copy()
-    img = jnp.array(img).astype(jnp.float64)
-    template = jnp.array(template).astype(jnp.float64)
+    img = jnp.array(img).astype(jnp.float32)
+    template = jnp.array(template).astype(jnp.float32)
 
     img = img + add_to_movie
     template = template + add_to_movie
@@ -2773,7 +2769,6 @@ class tile_and_correct_dataset():
         self.param_list = param_list
     
     def __len__(self):
-        print("THE CALCULATED LENGTH OF PARAM LIST IS {}".format(len(self.param_list)))
         return len(self.param_list)
     
     def __getitem__(self, index):
@@ -2822,7 +2817,6 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
     tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
     loader_obj= torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
-    print("THE NUMBER OF WORKERS IS {}".format(num_workers))
     
     
     results_list = []
@@ -2851,7 +2845,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
                 template = template[indices]
             if max_deviation_rigid == 0:
                 if filter_kernel is None: 
-                    outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, upsample_factor_fft, add_to_movie)
+                    outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
                     outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, upsample_factor_fft, add_to_movie)
@@ -2927,7 +2921,7 @@ def tile_and_correct_wrapper(params):
         template = template[indices]
     if max_deviation_rigid == 0:
         if filter_kernel is None: 
-            outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, upsample_factor_fft, add_to_movie)
+            outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
         else:
             imgs_filtered = high_pass_batch(filter_kernel, imgs)
             outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, upsample_factor_fft, add_to_movie)
@@ -2973,10 +2967,8 @@ def load_split_heuristic(d1, d2, T):
     '''
     
     if d1 > 400 or d2 > 400:
-        print("WE ARE USING size 20")
         new_T = 20
     else:
-        print("WE ARE USING 200")
         new_T = 200
     
     return min(T, new_T)
@@ -3043,7 +3035,6 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
             add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
             newoverlaps, newstrides, shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel])
 
-    logging.info("Testing if his works at all..")
     import time
     start_time = time.time()
     if dview is not None:
