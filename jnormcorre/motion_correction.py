@@ -1148,7 +1148,7 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
 
 ### START OF CODE FOR REGISTER TRANSLATION SECOND CALL
 
-@partial(jit, static_argnums=(1,))
+# @partial(jit, static_argnums=(1,))
 def _upsampled_dft_jax_full(data, upsampled_region_size,
                    upsample_factor, axis_offsets):
     """
@@ -1254,7 +1254,7 @@ def _upsampled_dft_jax_full(data, upsampled_region_size,
     return output
 
 
-@partial(jit)
+# @partial(jit)
 def threshold_shifts_0_if(new_cross_corr, shift_ub, shift_lb):
     ## In this case, shift_lb is negative and shift_ub is nonnegative
     a, b = new_cross_corr.shape
@@ -1265,7 +1265,7 @@ def threshold_shifts_0_if(new_cross_corr, shift_ub, shift_lb):
                                      new_cross_corr.shape)
     return new_cross_corr * expanded_prod
 
-@partial(jit)
+# @partial(jit)
 def threshold_shifts_0_else(new_cross_corr, shift_ub, shift_lb):
     #In this case shift_lb is nonnegative OR shift_ub is negative, we can go case by case
     a, b = new_cross_corr.shape
@@ -1282,7 +1282,7 @@ def threshold_shifts_0_else(new_cross_corr, shift_ub, shift_lb):
     return new_cross_corr * expanded_prod
 
 
-@partial(jit)
+# @partial(jit)
 def threshold_shifts_1_if(new_cross_corr, shift_ub, shift_lb):
     ## In this case, shift_lb is negative and shift_ub is nonnegative
     a, b = new_cross_corr.shape
@@ -1293,7 +1293,7 @@ def threshold_shifts_1_if(new_cross_corr, shift_ub, shift_lb):
                                      new_cross_corr.shape)
     return new_cross_corr * expanded_prod
 
-@partial(jit)
+# @partial(jit)
 def threshold_shifts_1_else(new_cross_corr, shift_ub, shift_lb):
     #In this case shift_lb is nonnegative OR shift_ub is negative, we can go case by case
     a, b = new_cross_corr.shape
@@ -1310,7 +1310,7 @@ def threshold_shifts_1_else(new_cross_corr, shift_ub, shift_lb):
     return new_cross_corr * expanded_prod
 
 
-@partial(jit, static_argnums=(2,))
+# @partial(jit, static_argnums=(2,))
 def register_translation_jax_full(src_image, target_image, upsample_factor,\
                                   shifts_lb,shifts_ub,max_shifts=(10, 10)):
     """
@@ -1473,8 +1473,10 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
 
     return shifts, src_freq, _compute_phasediff(CCmax)
 
-vmap_register_translation = jit(vmap(register_translation_jax_full,\
-                                     in_axes=(0,0, None, None, None, None)), static_argnums=(2,))
+# vmap_register_translation = jit(vmap(register_translation_jax_full,\
+#                                      in_axes=(0,0, None, None, None, None)), static_argnums=(2,))
+
+vmap_register_translation = vmap(register_translation_jax_full, in_axes=(0,0, None, None, None, None))
 
 
 ### END OF CODE FOR REGSISTER TRANSLATION SECOND CALL
@@ -2109,9 +2111,10 @@ def crop_image(img, x, y, length_1, length_2):
     out = jax.lax.dynamic_slice(img, (x,y), (length_1, length_2))
     return out
 
-crop_image_vmap = jit(vmap(crop_image, in_axes=(None, 0, 0, None, None)), static_argnums=(3,4))
+# crop_image_vmap = jit(vmap(crop_image, in_axes=(None, 0, 0, None, None)), static_argnums=(3,4))
+crop_image_vmap = vmap(crop_image, in_axes=(None, 0, 0, None, None))
 
-@partial(jit, static_argnums=(1,2,3,4))
+# @partial(jit, static_argnums=(1,2,3,4))
 def get_patches_jax(img, overlaps_0, overlaps_1, strides_0, strides_1):
     first_dim, second_dim = get_indices(img, overlaps_0, overlaps_1, strides_0, strides_1)
     product = jnp.array(jnp.meshgrid(first_dim, second_dim)).T.reshape((-1, 2))
@@ -2119,7 +2122,7 @@ def get_patches_jax(img, overlaps_0, overlaps_1, strides_0, strides_1):
     second_dim_new = product[:, 1]
     return crop_image_vmap(img, first_dim_new, second_dim_new, overlaps_0+strides_0, overlaps_1+strides_1)
 
-@partial(jit, static_argnums=(1,2,3,4))
+# @partial(jit, static_argnums=(1,2,3,4))
 def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
     first_dim, second_dim = get_indices(img, overlaps_0, overlaps_1, strides_0, strides_1)
     first_dim_updated = np.arange(jnp.size(first_dim))
@@ -2127,7 +2130,7 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
     product = jnp.array(jnp.meshgrid(first_dim_updated, second_dim_updated)).T.reshape((-1, 2))
     return product  
  
-@partial(jit, static_argnums=(3,4,5,6,8))
+# @partial(jit, static_argnums=(3,4,5,6,8))
 def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
                      max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
@@ -2313,9 +2316,9 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
     # compute rigid shifts
     rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
         img, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
-
+    
     # extract patches
-
+    
     templates = get_patches_jax(template, overlaps[0], overlaps[1], strides[0], strides[1])
     xy_grid = get_xy_grid(template, overlaps[0], overlaps[1], strides[0], strides[1])
     imgs = get_patches_jax(img, overlaps[0], overlaps[1], strides[0], strides[1])
@@ -2325,7 +2328,7 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
     comp_b = sum_1 // strides_1 + 1 + (sum_1 % strides_1 > 0)
     dim_grid = [comp_a, comp_b]
     num_tiles = comp_a * comp_b
-   
+    
     
     
     lb_shifts = jnp.ceil(jnp.subtract(
@@ -2374,8 +2377,7 @@ def opencv_interpolation(img, dims, shift_img_x, shift_img_y, x_grid, y_grid, ad
     return m_reg - add_value
 
     
-#Long term we want this function to work; right now jax does not have higher-order spline implemented 
-# so we cannot use this function (which uses first order spline for interpolation...
+# Note that jax does not have higher-order spline implemented, eventually switch to that
 # @partial(jit, static_argnums=(2,3,4,5,7))
 def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
                      max_deviation_rigid, add_to_movie):
@@ -2413,9 +2415,6 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
             maximum deviation in shifts of each patch from the rigid shift (should not be large)
 
         add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
-
-        filt_sig_size: tuple
-            standard deviation and size of gaussian filter to center filter data in case of one photon imaging data
 
         border_nan : bool or string, optional
             specifies how to deal with borders. (True, False, 'copy', 'min')
@@ -3050,3 +3049,4 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         res = tile_and_correct_dataloader(pars, split_constant=split_constant)
     print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
+
