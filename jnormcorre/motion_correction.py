@@ -136,8 +136,26 @@ class frame_corrector():
         
         if self.corr_method == "pwrigid":
             self.template = corrector.total_template_els
+            self.registration_method = jit(vmap(tile_and_correct_ideal, in_axes = (0, None, None, None, None, None, None, None, None, None)), static_argnums=(2,3,4,5,7))
+                           
+            def simplified_registration_func(frames):
+                return self.registration_method(frames, self.template, self.strides[0], self.strides[1], \
+                                                                     self.overlaps[0], self.overlaps[1], self.max_shifts,self.upsample_factor_fft, \
+                                                                     self.max_deviation_rigid, self.add_to_movie)[0]
+            self.jitted_method = jit(simplified_registration_func)
+            
         elif self.corr_method == "rigid":
             self.template = corrector.total_template_rig
+            
+            self.registration_method = vmap(tile_and_correct_rigid, in_axes=(0, None, None, None))
+            
+            def simplified_registration_func(frames):
+                return self.registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
+            self.jitted_method = jit(simplified_registration_func)
+        else:
+            raise ValueError("Invalid method provided. Must either be pwrigid or rigid")
+            
+            
             
         
         
@@ -147,40 +165,11 @@ class frame_corrector():
         Inputs: 
             frames: np.ndarray, dimensions (T, d1, d2), where T is the number of frames and d1, d2 are the FOV dimensions
         Outputs: 
-            corrected_frames: np.ndarray. Dimensions (T, d1, d2). The registered output from the input (frames)
+            corrected_frames: jnp.array. Dimensions (T, d1, d2). The registered output from the input (frames)
         
         TODO: Add logic to get 
         '''
-        if self.corr_method == "pwrigid":
-
-            num_iters = math.ceil(frames.shape[0] / self.batching)
-            output_list = [None]*num_iters
-            for k in range(num_iters):
-                start_pt = k * self.batching
-                end_pt = min(start_pt + self.batching, frames.shape[0])
-
-                x = tile_and_correct_pwrigid_vmap(frames[start_pt:end_pt, :, :], self.template, self.strides[0], self.strides[1], \
-                                                                     self.overlaps[0], self.overlaps[1], self.max_shifts,self.upsample_factor_fft, \
-                                                                     self.max_deviation_rigid, self.add_to_movie)[0]
-                output_list[k] = x
-            return output_list
-            
-        
-        elif self.corr_method == "rigid":
-
-            num_iters = math.ceil(frames.shape[0] / self.batching)
-            output_list = [None]*num_iters
-            for k in range(num_iters):
-                start_pt = k * self.batching
-                end_pt = min(start_pt + self.batching, frames.shape[0])
-
-                x = tile_and_correct_rigid_vmap(frames[start_pt:end_pt, :, :], self.template, self.max_shifts, self.add_to_movie)[0]
-                output_list[k] = x
-            return output_list
-
-        else:
-            raise ValueError("Invalid corr_method. Must either be pwrigid or rigid")
-        
+        return self.jitted_method(frames)     
 
 
 
@@ -2755,6 +2744,25 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
     return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
 
 
+def nan_processing_wrapper(arr, batch_size = 250000):
+    dim_1_step = int(math.sqrt(batch_size))
+    dim_2_step = int(math.sqrt(batch_size))
+    
+    dim1_net_iters = math.ceil(arr.shape[1]/dim_1_step)
+    dim2_net_iters = math.ceil(arr.shape[2]/dim_2_step)
+    
+    total_output = np.zeros((arr.shape[1], arr.shape[2]))
+    for k in range(dim1_net_iters):
+        for j in range(dim2_net_iters):
+            start_dim1 = k*dim_1_step
+            end_dim1 = min(start_dim1 +dim_1_step, arr.shape[1])
+            start_dim2 =k*dim_2_step
+            end_dim2 = min(start_dim2 + dim_2_step, arr.shape[2])
+            total_output[start_dim1:end_dim1, start_dim2:end_dim2] = nan_processing(arr[:, start_dim1:end_dim1, start_dim2:end_dim2])
+            
+    return total_output
+            
+
 
 @partial(jit)
 def nan_processing(arr):
@@ -2782,8 +2790,7 @@ class tile_and_correct_dataset():
         return imgs, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
         shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel
- 
-from pdb import set_trace as bp
+
 
 
 def regular_collate(batch):
@@ -2824,7 +2831,6 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
         imgs_net, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
         shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = data
-    
         for j in range(num_iters):
             
             start_pt = split_constant * j
@@ -2865,10 +2871,10 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
                 temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
                 shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
 
-
+                
         if out_fname is not None:
              tifffile.imwrite(out_fname, mc, append=True, metadata=None)
-        new_temp = nan_processing(mc)
+        new_temp = nan_processing_wrapper(mc)
         
         results_list.append((shift_info, idxs, new_temp))
         
@@ -2966,7 +2972,7 @@ def load_split_heuristic(d1, d2, T):
     '''
     
     if d1 > 400 or d2 > 400:
-        new_T = 20
+        new_T = 5
     else:
         new_T = 200
     
