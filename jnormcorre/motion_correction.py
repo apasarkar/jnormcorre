@@ -142,7 +142,7 @@ class frame_corrector():
                 return self.registration_method(frames, self.template, self.strides[0], self.strides[1], \
                                                                      self.overlaps[0], self.overlaps[1], self.max_shifts,self.upsample_factor_fft, \
                                                                      self.max_deviation_rigid, self.add_to_movie)[0]
-            self.jitted_method = jit(simplified_registration_func)
+            self.jitted_method = simplified_registration_func
             
         elif self.corr_method == "rigid":
             self.template = corrector.total_template_rig
