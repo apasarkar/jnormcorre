@@ -490,7 +490,7 @@ class MotionCorrect(object):
         else:
             self.motion_correct_rigid(template=template, save_movie=save_movie)
             b0 = np.ceil(np.max(np.abs(self.shifts_rig)))
-        self.border_to_0 = b0.astype(np.int)
+        self.border_to_0 = b0.astype(int)
         self.target_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
         
         frame_correction_obj = frame_corrector(self)
@@ -627,9 +627,9 @@ def apply_shift_iteration(img, shift, border_nan:bool=False, border_type=cv2.BOR
     if border_nan is not False:
         max_w, max_h, min_w, min_h = 0, 0, 0, 0
         max_h, max_w = np.ceil(np.maximum(
-            (max_h, max_w), shift)).astype(np.int)
+            (max_h, max_w), shift)).astype(int)
         min_h, min_w = np.floor(np.minimum(
-            (min_h, min_w), shift)).astype(np.int)
+            (min_h, min_w), shift)).astype(int)
         if border_nan is True:
             img[:max_h, :] = np.nan
             if min_h < 0:
@@ -683,7 +683,7 @@ def bin_median(mat, window=10, exclude_nans=True):
     T, d1, d2 = np.shape(mat)
     if T < window:
         window = T
-    num_windows = np.int(old_div(T, window))
+    num_windows = int(old_div(T, window))
     num_frames = num_windows * window
     if exclude_nans:
         img = np.nanmedian(np.nanmean(np.reshape(
@@ -1744,12 +1744,12 @@ def register_translation(src_image, target_image, upsample_factor=1,
 #     if border_nan is not False:
 #         max_w, max_h, min_w, min_h = 0, 0, 0, 0
 #         max_h, max_w = np.ceil(np.maximum(
-#             (max_h, max_w), shifts[:2])).astype(np.int)
+#             (max_h, max_w), shifts[:2])).astype(int)
 #         min_h, min_w = np.floor(np.minimum(
-#             (min_h, min_w), shifts[:2])).astype(np.int)
+#             (min_h, min_w), shifts[:2])).astype(int)
 #         if is3D:
-#             max_d = np.ceil(np.maximum(0, shifts[2])).astype(np.int)
-#             min_d = np.floor(np.minimum(0, shifts[2])).astype(np.int)
+#             max_d = np.ceil(np.maximum(0, shifts[2])).astype(int)
+#             min_d = np.floor(np.minimum(0, shifts[2])).astype(int)
 #         if border_nan is True:
 #             new_img[:max_h, :] = np.nan
 #             if min_h < 0:
