@@ -30,7 +30,6 @@ This implementation can support both online and offline motion correction use ca
 3. **Online**: jnormcorre can be set up to adaptively estimate a template, and then take a single pass through a stream of new data, registering all newly observed frames and updating the template in the process
 
 ## Citations
-- Amol Pasarkar et al., maskNMF
 - Eftychios A. Pnevmatikakis and Andrea Giovannucci, NoRMCorre: An online algorithm for piecewise rigid motion correction of calcium imaging data, Journal of Neuroscience Methods, vol. 291, pp 83-94, 2017; doi: https://doi.org/10.1016/j.jneumeth.2017.07.031
 
 - Matlab Implementation of Normcorre: https://github.com/flatironinstitute/NoRMCorre#ref
