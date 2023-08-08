@@ -317,9 +317,7 @@ class MotionCorrect(object):
         class implementing motion correction operations
        """
 
-    def __init__(self, fname, min_mov=None, dview=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,
-                 strides=(96, 96), overlaps=(32, 32), splits_els=14, num_splits_to_process_els=None,
-                 upsample_factor_grid=4, max_deviation_rigid=3, shifts_opencv=True, nonneg_movie=True, border_nan=True, pw_rigid=False, num_frames_split=80, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
+    def __init__(self, fname, min_mov=None, dview=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, shifts_opencv=True, nonneg_movie=True, border_nan=True, pw_rigid=False, num_frames_split=80, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
         """
         Constructor class for motion correction operations
 
@@ -347,6 +345,10 @@ class MotionCorrect(object):
             for parallelization split the movies in  num_splits chuncks across time
 
            num_splits_to_process_rig: list,
+               For rigid and piecewise rigid motion correction, the template is often update over many iterations. If there are "n" iterations, then num_spits_to_process_rig tells us how many splits (chunks of data) look at per iteration.  
+               num_splits_to_process_rig are considered
+               
+            num_splits_to_process_rig: list,
                if none all the splits are processed and the movie is saved, otherwise at each iteration
                num_splits_to_process_rig are considered
 
@@ -2582,6 +2584,9 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
             save_flag = True
         else:
             save_flag = False
+            
+        if iter_ == num_iter - 1 and save_flag: #Idea: If we are saving out the full movie, sampling to just get the template is insufficient
+            num_splits_to_process = None
         logging.info("We are about to enter motion correction piecewise")
         fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
                                                              add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts, max_deviation_rigid=0,
@@ -2703,6 +2708,9 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
             save_flag = True
         else:
             save_flag = False
+            
+        if iter_ == num_iter - 1 and save_flag:
+            num_splits_to_process = None
         fname_tot_els, res_el = motion_correction_piecewise(fname, splits, strides, overlaps,
                                                             add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts,
                                                             max_deviation_rigid=max_deviation_rigid,
