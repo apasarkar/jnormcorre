@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 """
-
 The functions apply_shifts_dft, register_translation, _compute_phasediff, and _upsampled_dft are from
 SIMA (https://github.com/losonczylab/sima), licensed under the  GNU GENERAL PUBLIC LICENSE, Version 2, 1991.
 These same functions were adapted from sckikit-image, licensed as follows:
@@ -35,7 +34,6 @@ Copyright (C) 2011, the scikit-image team
  STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
  IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  POSSIBILITY OF SUCH DAMAGE.
-
 """
 import os
 
@@ -71,28 +69,14 @@ from jnormcorre.utils.movies import load, load_iter
 
 import pathlib ##MOVE THIS ONE...
 from tqdm import tqdm 
-# try:
-#     cv2.setNumThreads(0)
-# except:
-#     pass
-
 from cv2 import dft as fftn
 from cv2 import idft as ifftn
 opencv = True
 
-
-
-
-try:
-    profile
-except:
-    def profile(a): return a
-
-
-
 import math
 
-from jax.config import config
+import pdb
+
 
 
 
@@ -356,7 +340,7 @@ class MotionCorrect(object):
                maximum number of iterations rigid motion correction, in general is 1. 0
                will quickly initialize a template with the first frames
                
-            niter_els:int
+           niter_els:int
                 maximum number of iterations of piecewise rigid motion correction. Default value of 1
 
            splits_rig': int
@@ -494,7 +478,7 @@ class MotionCorrect(object):
         self.target_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
         
         frame_correction_obj = frame_corrector(self)
-        return frame_correction_obj
+        return frame_correction_obj, self.target_file
 
     def motion_correct_rigid(self, template=None, save_movie=False) -> None:
         """
@@ -577,7 +561,7 @@ class MotionCorrect(object):
         num_iter = self.niter_els
         if template is None:
             logging.info('Generating template by rigid motion correction')
-            self.motion_correct_rigid()
+            self.motion_correct_rigid(save_movie=False)
             self.total_template_els = self.total_template_rig.copy()
         else:
             self.total_template_els = template
@@ -2485,8 +2469,6 @@ tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct_ideal, in_axes = (0, N
                            static_argnums=(2,3,4,5,7))    
 
 
-
-#%%
 def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_splits_to_process=None, num_iter=1,
                                template=None, shifts_opencv=False, save_movie_rigid=False, add_to_movie=None,
                                nonneg_movie=False, subidx=slice(None, None, 1), border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel = None):
@@ -2581,7 +2563,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
     else:
         logging.debug('Adding to movie ' + str(add_to_movie))
 
-    save_movie = False
+    save_movie = save_movie_rigid
     fname_tot_rig = None
     res_rig:List = []
     for iter_ in range(num_iter):
@@ -2591,16 +2573,19 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
             save_movie = save_movie_rigid
             logging.debug('saving!')
 
-
         if isinstance(fname, tuple):
             base_name=os.path.split(fname[0])[-1][:-4] + '_rig_'
         else:
             base_name=os.path.split(fname)[-1][:-4] + '_rig_'
 
+        if iter_ == num_iter - 1 and save_movie_rigid:
+            save_flag = True
+        else:
+            save_flag = False
         logging.info("We are about to enter motion correction piecewise")
         fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
                                                              add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts, max_deviation_rigid=0,
-                                                             dview=dview, save_movie=save_movie, base_name=base_name, subidx = subidx,
+                                                             dview=dview, save_movie=save_flag, base_name=base_name, subidx = subidx,
                                                              num_splits=num_splits_to_process, shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
         
         if filter_kernel is not None:
@@ -2714,11 +2699,15 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
         else:
             base_name=os.path.split(fname)[-1][:-4] + '_els_'
 
+        if iter_ == num_iter - 1 and save_movie:
+            save_flag = True
+        else:
+            save_flag = False
         fname_tot_els, res_el = motion_correction_piecewise(fname, splits, strides, overlaps,
                                                             add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts,
                                                             max_deviation_rigid=max_deviation_rigid,
                                                             newoverlaps=newoverlaps, newstrides=newstrides,
-                                                            upsample_factor_grid=upsample_factor_grid, order='F', dview=dview, save_movie=save_movie,
+                                                            upsample_factor_grid=upsample_factor_grid, order='F', dview=dview, save_movie=save_flag,
                                                             base_name=base_name, num_splits=num_splits_to_process,
                                                             shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
 
@@ -2824,7 +2813,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
     loader_obj= torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
     
-    
+   
     results_list = []
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
         num_iters = math.ceil(data[0].shape[0]/split_constant)
@@ -2972,9 +2961,9 @@ def load_split_heuristic(d1, d2, T):
     '''
     
     if d1 > 400 or d2 > 400:
-        new_T = 5
+        new_T = 100
     else:
-        new_T = 200
+        new_T = 2000
     
     return min(T, new_T)
 
@@ -2983,9 +2972,9 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
                                 upsample_factor_grid=4, order='F', dview=None, save_movie=True,
                                 base_name=None, subidx = None, num_splits=None, shifts_opencv=False, nonneg_movie=False, border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel=None):
     """
-
+    TODO DOCUMENT
     """
-    # todo todocument
+    
     if isinstance(fname, tuple):
         name, extension = os.path.splitext(fname[0])[:2]
     else:
@@ -2997,6 +2986,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     z = np.zeros(dims)
     dims = z[indices].shape
     logging.debug('Number of Splits: {}'.format(splits))
+    
     if isinstance(splits, int):
         if subidx is None:
             rng = range(T)
@@ -3028,6 +3018,12 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
             fname_tot = os.path.join(os.path.split(fname[0])[0], fname_tot)
         else:
             fname_tot = os.path.join(os.path.split(fname)[0], fname_tot)
+            
+            
+        if os.path.exists(fname_tot):
+            os.remove(fname_tot)
+            print(f"File '{fname_tot}' already exists, likely from a different run of motion correction. It will be overwritten.")
+
 
         logging.info('Saving file as {}'.format(fname_tot))
     else:
@@ -3055,4 +3051,3 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         res = tile_and_correct_dataloader(pars, split_constant=split_constant)
     print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
-
