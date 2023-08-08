@@ -317,7 +317,7 @@ class MotionCorrect(object):
         class implementing motion correction operations
        """
 
-    def __init__(self, fname, min_mov=None, dview=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, shifts_opencv=True, nonneg_movie=True, border_nan=True, pw_rigid=False, num_frames_split=80, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
+    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, shifts_opencv=True, nonneg_movie=True, border_nan=True, pw_rigid=False, num_frames_split=80, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
         """
         Constructor class for motion correction operations
 
@@ -327,9 +327,6 @@ class MotionCorrect(object):
 
            min_mov: int16 or float32
                estimated minimum value of the movie to produce an output that is positive
-
-           dview: ipyparallel view object list
-               to perform parallel computing, if NOne will operate in single thread
 
            max_shifts: tuple
                maximum allow rigid shift
@@ -409,7 +406,6 @@ class MotionCorrect(object):
             fname = [fname]
 
         self.fname = fname
-        self.dview = dview
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
         self.niter_els = niter_els
@@ -513,7 +509,6 @@ class MotionCorrect(object):
             _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = motion_correct_batch_rigid(
                 fname_cur,
                 self.max_shifts,
-                dview=self.dview,
                 splits=self.splits_rig,
                 num_splits_to_process=self.num_splits_to_process_rig,
                 num_iter=self.niter_rig,
@@ -578,7 +573,7 @@ class MotionCorrect(object):
             _fname_tot_els, new_template_els, _templates_els,\
                 _x_shifts_els, _y_shifts_els, _z_shifts_els, _coord_shifts_els = motion_correct_batch_pwrigid(
                     name_cur, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
-                    dview=self.dview, upsample_factor_grid=self.upsample_factor_grid,
+                    upsample_factor_grid=self.upsample_factor_grid,
                     max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
                     num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
                     shifts_opencv=self.shifts_opencv, save_movie=save_movie, nonneg_movie=self.nonneg_movie, border_nan=self.border_nan, var_name_hdf5=self.var_name_hdf5, indices=self.indices, filter_kernel=self.filter_kernel)
@@ -2471,7 +2466,7 @@ tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct_ideal, in_axes = (0, N
                            static_argnums=(2,3,4,5,7))    
 
 
-def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_splits_to_process=None, num_iter=1,
+def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
                                template=None, shifts_opencv=False, save_movie_rigid=False, add_to_movie=None,
                                nonneg_movie=False, subidx=slice(None, None, 1), border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel = None):
     """
@@ -2483,9 +2478,6 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
 
         max_shifts: tuple
             x and y (and z if 3D) maximum allowed shifts
-
-        dview: ipyparallel view
-            used to perform parallel computing
 
         splits: int
             number of batches in which the movies is subdivided
@@ -2590,7 +2582,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
         logging.info("We are about to enter motion correction piecewise")
         fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
                                                              add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts, max_deviation_rigid=0,
-                                                             dview=dview, save_movie=save_flag, base_name=base_name, subidx = subidx,
+                                                             save_movie=save_flag, base_name=base_name, subidx = subidx,
                                                              num_splits=num_splits_to_process, shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
         
         if filter_kernel is not None:
@@ -2609,7 +2601,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
     return fname_tot_rig, total_template, templates, shifts
 
 def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_movie, newoverlaps=None, newstrides=None,
-                                 dview=None, upsample_factor_grid=4, max_deviation_rigid=3,
+                                 upsample_factor_grid=4, max_deviation_rigid=3,
                                  splits=56, num_splits_to_process=None, num_iter=1,
                                  template=None, shifts_opencv=False, save_movie=False, nonneg_movie=False,
                                  border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)),filter_kernel=None):
@@ -2634,9 +2626,6 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
 
         max_shifts: tuple
             x and y maximum allowed shifts 
-
-        dview: ipyparallel view
-            used to perform parallel computing
 
         splits: int
             number of batches in which the movies is subdivided
@@ -2715,7 +2704,7 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
                                                             add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts,
                                                             max_deviation_rigid=max_deviation_rigid,
                                                             newoverlaps=newoverlaps, newstrides=newstrides,
-                                                            upsample_factor_grid=upsample_factor_grid, order='F', dview=dview, save_movie=save_flag,
+                                                            upsample_factor_grid=upsample_factor_grid, order='F', save_movie=save_flag,
                                                             base_name=base_name, num_splits=num_splits_to_process,
                                                             shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
 
@@ -2977,7 +2966,7 @@ def load_split_heuristic(d1, d2, T):
 
 def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
                                 max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
-                                upsample_factor_grid=4, order='F', dview=None, save_movie=True,
+                                upsample_factor_grid=4, order='F', save_movie=True,
                                 base_name=None, subidx = None, num_splits=None, shifts_opencv=False, nonneg_movie=False, border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel=None):
     """
     TODO DOCUMENT
@@ -3018,10 +3007,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     if save_movie:
         if base_name is None:
             base_name = os.path.split(fname)[1][:-4]
-        if dview is None:
-            fname_tot:Optional[str] = tiff_frames_filename(base_name, dims, T, order)
-        else:
-            fname_tot:Optional[str] = memmap_frames_filename(base_name, dims, T, order)
+        fname_tot:Optional[str] = tiff_frames_filename(base_name, dims, T, order)
         if isinstance(fname, tuple):
             fname_tot = os.path.join(os.path.split(fname[0])[0], fname_tot)
         else:
@@ -3046,16 +3032,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
 
     import time
     start_time = time.time()
-    if dview is not None:
-        logging.info('** Starting parallel motion correction **')
-        if 'multiprocessing' in str(type(dview)):
-            logging.info("STARTED MULTIPROCESS")
-            res = dview.map_async(tile_and_correct_wrapper, pars).get(4294967)
-        else:
-            res = dview.map_sync(tile_and_correct_wrapper, pars)
-        logging.info('** Finished parallel motion correction **')
-    else:
-        split_constant = load_split_heuristic(dims[0], dims[1], T)
-        res = tile_and_correct_dataloader(pars, split_constant=split_constant)
+    split_constant = load_split_heuristic(dims[0], dims[1], T)
+    res = tile_and_correct_dataloader(pars, split_constant=split_constant)
     print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
