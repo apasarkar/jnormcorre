@@ -74,11 +74,6 @@ from cv2 import idft as ifftn
 
 import math
 
-import pdb
-
-
-
-
 ## TODO: Check whether enable x64 is worth it
 # config.update("jax_enable_x64", True)
 
@@ -2372,7 +2367,6 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
         if filter_kernel is not None:
             new_templ = high_pass_filter_cv(filter_kernel, new_templ)
         else:
-            pdb.set_trace()
             new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
 
     total_template = new_templ
