@@ -317,7 +317,7 @@ class MotionCorrect(object):
         class implementing motion correction operations
        """
 
-    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, shifts_opencv=True, nonneg_movie=True, border_nan=True, pw_rigid=False, num_frames_split=80, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
+    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, nonneg_movie=True, border_nan=True, pw_rigid=False, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
         """
         Constructor class for motion correction operations
 
@@ -339,7 +339,7 @@ class MotionCorrect(object):
                 maximum number of iterations of piecewise rigid motion correction. Default value of 1
 
            splits_rig': int
-            for parallelization split the movies in  num_splits chuncks across time
+            for parallelization split the movies in num_splits chuncks across time
 
            num_splits_to_process_rig: list,
                For rigid and piecewise rigid motion correction, the template is often update over many iterations. If there are "n" iterations, then num_spits_to_process_rig tells us how many splits (chunks of data) look at per iteration.  
@@ -355,11 +355,11 @@ class MotionCorrect(object):
            overlaps: tuple
                overlap between pathes (size of patch strides+overlaps)
 
-           pw_rigig: bool, default: False
+           pw_rigid: bool, default: False
                flag for performing motion correction when calling motion_correct
 
            splits_els':list
-               for parallelization split the movies in  num_splits chuncks across time
+               for parallelization split the movies in num_splits chuncks across time
 
            num_splits_to_process_els: list,
                if none all the splits are processed and the movie is saved  otherwise at each iteration
@@ -371,26 +371,19 @@ class MotionCorrect(object):
            max_deviation_rigid:int
                maximum deviation allowed for patch with respect to rigid shift
 
-           shifts_opencv: Bool
-               apply shifts fast way (but smoothing results)
-
            nonneg_movie: boolean
                make the SAVED movie and template mostly nonnegative by removing min_mov from movie
 
            border_nan : bool or string, optional
                Specifies how to deal with borders. (True, False, 'copy', 'min')
 
-           num_frames_split: int, default: 80
-               Number of frames in each batch. Used when cosntructing the options
-               through the params object
-
            var_name_hdf5: str, default: 'mov'
                If loading from hdf5, name of the variable to load
 
-            indices: tuple(slice), default: (slice(None), slice(None))
+           indices: tuple(slice), default: (slice(None), slice(None))
                Use that to apply motion correction only on a part of the FOV
                
-            gSig_filt: tuple. Default None. 
+           gSig_filt: tuple. Default None. 
                 Contains 2 components describing the dimensions of a kernel. We use the kernel to high-pass filter data which has large background contamination.
 
        Returns:
@@ -417,7 +410,6 @@ class MotionCorrect(object):
         self.num_splits_to_process_els = num_splits_to_process_els
         self.upsample_factor_grid = upsample_factor_grid
         self.max_deviation_rigid = max_deviation_rigid
-        self.shifts_opencv = bool(shifts_opencv)
         self.min_mov = min_mov
         self.nonneg_movie = nonneg_movie
         self.border_nan = border_nan
@@ -513,7 +505,6 @@ class MotionCorrect(object):
                 num_splits_to_process=self.num_splits_to_process_rig,
                 num_iter=self.niter_rig,
                 template=self.total_template_rig,
-                shifts_opencv=self.shifts_opencv,
                 save_movie_rigid=save_movie,
                 add_to_movie=-self.min_mov,
                 nonneg_movie=self.nonneg_movie,
@@ -576,7 +567,7 @@ class MotionCorrect(object):
                     upsample_factor_grid=self.upsample_factor_grid,
                     max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
                     num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
-                    shifts_opencv=self.shifts_opencv, save_movie=save_movie, nonneg_movie=self.nonneg_movie, border_nan=self.border_nan, var_name_hdf5=self.var_name_hdf5, indices=self.indices, filter_kernel=self.filter_kernel)
+                    save_movie=save_movie, nonneg_movie=self.nonneg_movie, border_nan=self.border_nan, var_name_hdf5=self.var_name_hdf5, indices=self.indices, filter_kernel=self.filter_kernel)
 
             if show_template:
                 pl.imshow(new_template_els)
@@ -2467,7 +2458,7 @@ tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct_ideal, in_axes = (0, N
 
 
 def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
-                               template=None, shifts_opencv=False, save_movie_rigid=False, add_to_movie=None,
+                               template=None, save_movie_rigid=False, add_to_movie=None,
                                nonneg_movie=False, subidx=slice(None, None, 1), border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel = None):
     """
     Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
@@ -2490,9 +2481,6 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
 
         template: ndarray
             if a good approximation of the template to register is available, it can be used
-
-        shifts_opencv: boolean
-             toggle the shifts applied with opencv, if yes faster but induces some smoothing
 
         save_movie_rigid: boolean
              toggle save movie
@@ -2583,7 +2571,7 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
         fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
                                                              add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts, max_deviation_rigid=0,
                                                              save_movie=save_flag, base_name=base_name, subidx = subidx,
-                                                             num_splits=num_splits_to_process, shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
+                                                             num_splits=num_splits_to_process, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
         
         if filter_kernel is not None:
             new_templ = high_pass_filter_cv(filter_kernel, new_templ)
@@ -2603,7 +2591,7 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
 def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_movie, newoverlaps=None, newstrides=None,
                                  upsample_factor_grid=4, max_deviation_rigid=3,
                                  splits=56, num_splits_to_process=None, num_iter=1,
-                                 template=None, shifts_opencv=False, save_movie=False, nonneg_movie=False,
+                                 template=None, save_movie=False, nonneg_movie=False,
                                  border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)),filter_kernel=None):
     """
     Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
@@ -2638,9 +2626,6 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
 
         template: ndarray
             if a good approximation of the template to register is available, it can be used
-
-        shifts_opencv: boolean
-             toggle the shifts applied with opencv, if yes faster but induces some smoothing
 
         save_movie_rigid: boolean
              toggle save movie
@@ -2706,7 +2691,7 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
                                                             newoverlaps=newoverlaps, newstrides=newstrides,
                                                             upsample_factor_grid=upsample_factor_grid, order='F', save_movie=save_flag,
                                                             base_name=base_name, num_splits=num_splits_to_process,
-                                                            shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
+                                                            nonneg_movie=nonneg_movie, border_nan=border_nan, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
         if filter_kernel is not None:
@@ -2767,7 +2752,7 @@ class tile_and_correct_dataset():
     def __getitem__(self, index):
         img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel= self.param_list[index]
+        nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel= self.param_list[index]
         
         imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
         imgs = np.array(imgs[(slice(None),) + indices])
@@ -2775,7 +2760,7 @@ class tile_and_correct_dataset():
         
         return imgs, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel
+        nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel
 
 
 
@@ -2816,7 +2801,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
         num_iters = math.ceil(data[0].shape[0]/split_constant)
         imgs_net, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = data
+        nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = data
         for j in range(num_iters):
             
             start_pt = split_constant * j
@@ -2891,7 +2876,7 @@ def tile_and_correct_wrapper(params):
 
     img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = params
+        nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel = params
 
   
     
@@ -2967,7 +2952,7 @@ def load_split_heuristic(d1, d2, T):
 def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
                                 max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
                                 upsample_factor_grid=4, order='F', save_movie=True,
-                                base_name=None, subidx = None, num_splits=None, shifts_opencv=False, nonneg_movie=False, border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel=None):
+                                base_name=None, subidx = None, num_splits=None, nonneg_movie=False, border_nan=True, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel=None):
     """
     TODO DOCUMENT
     """
@@ -3028,7 +3013,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         logging.debug('Processing: frames: {}'.format(idx))
         pars.append([fname, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
             add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-            newoverlaps, newstrides, shifts_opencv, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel])
+            newoverlaps, newstrides, nonneg_movie, is_fiji, border_nan, var_name_hdf5, indices, filter_kernel])
 
     import time
     start_time = time.time()
