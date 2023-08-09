@@ -2654,7 +2654,9 @@ def load_split_heuristic(d1, d2, T):
     Heuristic for determining how many frames to register at a time (to avoid GPU OOM)
     '''
     
-    if d1 > 400 or d2 > 400:
+    if d1*d2 > 512*512:
+        new_T = 20
+    elif d1*d2 > 100000:
         new_T = 100
     else:
         new_T = 2000
