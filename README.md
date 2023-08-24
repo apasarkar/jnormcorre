@@ -20,6 +20,18 @@ cd jnormcorre
 pip install -e .
 ```
 
+To install the most recently published version from PyPI, you can do: 
+
+```
+#Step 1: Install the appropriate version of jax for your hardware system 
+
+#Step 2: Run below line
+pip install jnormcorre
+```
+
+The package on PyPI comes with jax, but doing the install in this order will allow you to control whether your version of jax is GPU/TPU compatible for your system. If you are only running on CPU, you can just skip to step 2. 
+
+
 ## Use Cases
 This implementation can support both online and offline motion correction use cases. Here are some common ones: 
 
