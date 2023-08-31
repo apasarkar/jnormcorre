@@ -25,7 +25,6 @@ class Test_Simulation:
 
         _, _ = sim.simulate()
 
-
 class Test_mc:
 
     def save_sample(self, input_, data, h5_loc=None):
@@ -93,7 +92,7 @@ class Test_mc:
     @pytest.mark.parametrize("overlaps", [(10, 10)]) # fails: , (24, 24)
     @pytest.mark.parametrize("pw_rigid", [True]) # , False
     @pytest.mark.parametrize("min_mov", [-5]) # , False
-    @pytest.mark.parametrize("niter_els", [1]) # , False
+    @pytest.mark.parametrize("niter_els", [1, 5])
     def test_file(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
                   gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
                    niter_rig=4, nonneg_movie=True, max_deviation_rigid=3, upsample_factor_grid=4, strides=(50, 50)):

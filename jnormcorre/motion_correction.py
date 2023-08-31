@@ -384,6 +384,9 @@ class MotionCorrect(object):
         if not isinstance(fname, list):
             fname = [fname]
 
+        if not isinstance(niter_els, int) or niter_els < 1:
+            raise ValueError(f"please provide n_iter as an int of 1 or higher.")
+
         self.fname = fname
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
