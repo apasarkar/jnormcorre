@@ -88,9 +88,9 @@ class Test_mc:
     @pytest.mark.parametrize("num_splits_to_process_els", [5, None])
     @pytest.mark.parametrize("splits_els", [5]) # fails: , 14
     @pytest.mark.parametrize("splits_rig", [5]) # fails: , 14
-    @pytest.mark.parametrize("gSig_filt", [None]) # fails: , 5, 20 (20, 20)
-    @pytest.mark.parametrize("overlaps", [(10, 10)]) # fails: , (24, 24)
-    @pytest.mark.parametrize("pw_rigid", [True]) # , False
+    @pytest.mark.parametrize("gSig_filt", [None, (10, 10)]) # fails: , 5, 20 (20, 20)
+    @pytest.mark.parametrize("overlaps", [(10, 10), (24, 24)])
+    @pytest.mark.parametrize("pw_rigid", [True, False])
     @pytest.mark.parametrize("min_mov", [-5, 5, None])
     @pytest.mark.parametrize("niter_els", [1, 5])
     def test_file(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,

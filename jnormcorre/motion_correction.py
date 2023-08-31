@@ -448,7 +448,7 @@ class MotionCorrect(object):
                 self.min_mov = mi
             else: 
                 self.min_mov = np.array([high_pass_filter_cv(m_, self.filter_kernel)
-                    for m_ in jnormcorre.utils.movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
+                    for m_ in movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
                                       subindices=slice(400))]).min()
 
 
@@ -2328,7 +2328,7 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
 
     if template is None:
         if filter_kernel is not None:
-            m = jnormcorre.utils.movies.movie(
+            m = movies.movie(
                 np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m]))
             
         if not m.flags['WRITEABLE']:
