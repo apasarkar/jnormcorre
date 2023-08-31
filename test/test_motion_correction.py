@@ -111,9 +111,10 @@ class Test_mc:
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
-        self.shifts = mc.shifts_rig
+        calc_shifts = mc.shifts_rig
 
         # test correct shift reconstruction
+        np.allclose(shifts, calc_shifts), f"calculated shifts are to different from True value"
 
     @pytest.mark.parametrize("num_splits_to_process_els", [5, 10])
     @pytest.mark.parametrize("splits_els", [5, 10])
@@ -149,5 +150,70 @@ class Test_mc:
                 nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
 
         # Perform motion correction
+        mc.motion_correct(save_movie=True)
+
+    @pytest.mark.parametrize("n_frames", [25, 100])
+    @pytest.mark.parametrize("pw_rigid", [True, False])
+    @pytest.mark.parametrize("max_drift", [(1e-1), (1e-4, 1e-2), (1e-3, 1e-2), (1e-3, 1e-1)])
+    def test_movement(self, n_frames, pw_rigid, max_drift, dim=80):
+
+        frames, X, Y = (n_frames, dim, dim)
+        max_shift = int(dim/2) - 1
+
+        # simulate movement artifacts
+        sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
+                           blob_amplitude=5, max_drift=max_drift, max_jitter=1,
+                           background_noise=1, shot_noise=0.2)
+
+        data, shifts = sim.simulate()
+        assert np.max(shifts) < max_shift, f"simulated data deviates too much"
+
+        # Create MotionCorrect instance
+
+        mc = MotionCorrect(data,
+                max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                upsample_factor_grid=4, max_deviation_rigid=3,
+                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
+
         # Perform motion correction
         mc.motion_correct(save_movie=True)
+        calc_shifts = mc.shifts_rig
+
+        # test correct shift reconstruction
+        np.allclose(shifts, calc_shifts), f"calculated shifts are to different from True value"
+
+    @pytest.mark.xfail(reason="movement that exceeds capabilities")
+    @pytest.mark.parametrize("n_frames", [400])
+    @pytest.mark.parametrize("pw_rigid", [True, False])
+    @pytest.mark.parametrize("max_drift", [(1e-3, 1e-1), (1e-2, 1e-1)])
+    def test_movement_extreme(self, n_frames, pw_rigid, max_drift, dim=80):
+
+        frames, X, Y = (n_frames, dim, dim)
+        max_shift = int(dim/2) - 1
+
+        # simulate movement artifacts
+        sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
+                           blob_amplitude=5, max_drift=max_drift, max_jitter=1,
+                           background_noise=1, shot_noise=0.2)
+
+        data, shifts = sim.simulate()
+        assert np.max(shifts) < max_shift, f"simulated data deviates too much"
+
+        # Create MotionCorrect instance
+
+        mc = MotionCorrect(data,
+                max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                upsample_factor_grid=4, max_deviation_rigid=3,
+                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
+
+        # Perform motion correction
+        mc.motion_correct(save_movie=True)
+        calc_shifts = mc.shifts_rig
+
+        # test correct shift reconstruction
+        np.allclose(shifts, calc_shifts), f"calculated shifts are to different from True value"
+
