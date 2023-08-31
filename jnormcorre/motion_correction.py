@@ -205,7 +205,7 @@ def get_file_size(file_name, var_name_hdf5='mov'):
                 # Consider pulling a lot of the "data source" code out into one place
                 with h5py.File(file_name, "r") as f:
                     kk = list(f.keys())
-                    if len(kk) == 1:
+                    if len(kk) == 1 and var_name_hdf5 not in f:
                         siz = f[kk[0]].shape
                     elif var_name_hdf5 in f:
                         if extension == '.nwb':

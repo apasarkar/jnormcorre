@@ -917,9 +917,6 @@ def load(file_name: Union[str, List[str]],
 
         elif extension in ('.hdf5', '.h5', '.nwb'):
            with h5py.File(file_name, "r") as f:
-                fkeys = list(f.keys())
-                if len(fkeys) == 1: # If the hdf5 file we're parsing has only one dataset inside it, ignore the arg and pick that dataset
-                    var_name_hdf5 = fkeys[0]
 
                 if extension == '.nwb': # Apparently nwb files are specially-formatted hdf5 files
                     try:
