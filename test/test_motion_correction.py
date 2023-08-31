@@ -62,11 +62,28 @@ class Test_mc:
         self.data = data
         self.shifts = shifts
 
-    # @pytest.mark.parametrize("file_path", ("test.tiff", "test.h5"))
-    # @pytest.mark.parametrize("h5_loc", ("data", "data/ch0"))
-    # @pytest.mark.parametrize("shape", []) # fails: ,
-    @pytest.mark.parametrize("file_path", ["test.tiff"]) # fails: ,
-    @pytest.mark.parametrize("h5_loc", ["data"]) # fails: ,
+    @pytest.mark.parametrize("file_type", [("test.tiff", None), ("test.h5", "data/"), ("test.h5", "data/ch0")])
+    def test_file(self, file_type):
+
+        name, h5_loc = file_type
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_dir = Path(tmp_dir)
+
+            # create sim data
+            data, shifts = self.data, self.shifts
+            input_ = self.save_sample(tmp_dir.joinpath(name), data, h5_loc=h5_loc)
+
+            mc = MotionCorrect(input_, var_name_hdf5=h5_loc,
+                               max_shifts=(6, 6), niter_rig=4, nonneg_movie=True, max_deviation_rigid=3,
+                               upsample_factor_grid=4, strides=(50, 50), splits_rig=5, splits_els=5, gSig_filt=None,
+                               num_splits_to_process_els=5, num_splits_to_process_rig=5, pw_rigid=True,
+                               overlaps=(10, 10), min_mov=-5, niter_els=1)
+
+            # Perform motion correction
+            mc.motion_correct(save_movie=True)
+            self.shifts = mc.shifts_rig
+
     @pytest.mark.parametrize("max_shifts", [(6, 6)]) # fails: , (50, 50)
     @pytest.mark.parametrize("num_splits_to_process_rig", [5, None])
     @pytest.mark.parametrize("num_splits_to_process_els", [5, None])
@@ -77,31 +94,23 @@ class Test_mc:
     @pytest.mark.parametrize("pw_rigid", [True]) # , False
     @pytest.mark.parametrize("min_mov", [-5]) # , False
     @pytest.mark.parametrize("niter_els", [1]) # , False
-    def test_file(self, file_path, h5_loc, #shape,
-                  max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
+    def test_file(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
                   gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
-                   niter_rig=4, nonneg_movie=True, max_deviation_rigid=3, upsample_factor_grid=4, strides=(50, 50),
-                   ):
+                   niter_rig=4, nonneg_movie=True, max_deviation_rigid=3, upsample_factor_grid=4, strides=(50, 50)):
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_dir = Path(tmp_dir)
+        input_, shifts = self.data, self.shifts
 
-            # create sim data
-            data, shifts = self.data, self.shifts
-            input_ = self.save_sample(file_path, data, h5_loc=h5_loc)
+        # Create MotionCorrect instance
+        mc = MotionCorrect(input_, var_name_hdf5=None,
+                max_shifts=max_shifts, niter_rig=niter_rig, splits_rig=splits_rig,
+                num_splits_to_process_rig=num_splits_to_process_rig, strides=strides, overlaps=overlaps,
+                pw_rigid=pw_rigid, splits_els=splits_els, num_splits_to_process_els=num_splits_to_process_els,
+                upsample_factor_grid=upsample_factor_grid, max_deviation_rigid=max_deviation_rigid,
+                nonneg_movie=nonneg_movie, gSig_filt=gSig_filt,
+                           min_mov=min_mov, niter_els=niter_els)
 
-            # Create MotionCorrect instance
-            mc = MotionCorrect(input_, var_name_hdf5=h5_loc,
-                    max_shifts=max_shifts, niter_rig=niter_rig, splits_rig=splits_rig,
-                    num_splits_to_process_rig=num_splits_to_process_rig, strides=strides, overlaps=overlaps,
-                    pw_rigid=pw_rigid, splits_els=splits_els, num_splits_to_process_els=num_splits_to_process_els,
-                    upsample_factor_grid=upsample_factor_grid, max_deviation_rigid=max_deviation_rigid,
-                    nonneg_movie=nonneg_movie, gSig_filt=gSig_filt,
-                               min_mov=min_mov, niter_els=niter_els)
+        # Perform motion correction
+        mc.motion_correct(save_movie=True)
+        self.shifts = mc.shifts_rig
 
-            # Perform motion correction
-            mc.motion_correct(save_movie=True)
-            self.shifts = mc.shifts_rig
-
-
-        # test just array
+        # test correct shift reconstruction
