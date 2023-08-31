@@ -1846,7 +1846,7 @@ def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_mo
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
-tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, None, None, None)))
+tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, (None, None), None)))
         
         
 # @partial(jit, static_argnums=(3,))
@@ -2624,7 +2624,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
                     outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, upsample_factor_fft, add_to_movie)
+                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
                 mc[start_pt:end_pt, :, :] = outs[0]
                 temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
                 shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))

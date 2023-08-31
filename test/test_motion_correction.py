@@ -61,7 +61,8 @@ class Test_mc:
         self.data = data
         self.shifts = shifts
 
-    @pytest.mark.parametrize("file_type", [("test.tiff", None), ("test.h5", "data/"), ("test.h5", "data/ch0")])
+    @pytest.mark.parametrize("file_type", [("test.tiff", None), ("test.h5", "data/"),
+                                           ("test.h5", "data/ch0"), ("test.h5", "data/ch0/dff")])
     def test_file(self, file_type):
 
         name, h5_loc = file_type
