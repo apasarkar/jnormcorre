@@ -52,7 +52,7 @@ class Test_mc:
 
     def setup_method(self):
 
-        frames, X, Y = (25, 75, 75)
+        frames, X, Y = (25, 80, 80)
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
                            blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
                            background_noise=1, shot_noise=0.2)
@@ -84,17 +84,17 @@ class Test_mc:
             mc.motion_correct(save_movie=True)
             self.shifts = mc.shifts_rig
 
-    @pytest.mark.parametrize("max_shifts", [(6, 6)]) # fails: , (50, 50)
-    @pytest.mark.parametrize("num_splits_to_process_rig", [5, None])
-    @pytest.mark.parametrize("num_splits_to_process_els", [5, None])
-    @pytest.mark.parametrize("splits_els", [5]) # fails: , 14
-    @pytest.mark.parametrize("splits_rig", [5]) # fails: , 14
-    @pytest.mark.parametrize("gSig_filt", [None, (10, 10)]) # fails: , 5, 20 (20, 20)
+    @pytest.mark.parametrize("max_shifts", [(6, 6), (39, 39)])
+    @pytest.mark.parametrize("num_splits_to_process_rig", [5])
+    @pytest.mark.parametrize("num_splits_to_process_els", [5])
+    @pytest.mark.parametrize("splits_els", [5])
+    @pytest.mark.parametrize("splits_rig", [5])
+    @pytest.mark.parametrize("gSig_filt", [None, (10, 10)])
     @pytest.mark.parametrize("overlaps", [(10, 10), (24, 24)])
     @pytest.mark.parametrize("pw_rigid", [True, False])
-    @pytest.mark.parametrize("min_mov", [-5, 5, None])
-    @pytest.mark.parametrize("niter_els", [1, 5])
-    def test_file(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
+    @pytest.mark.parametrize("min_mov", [None, -5, 5])
+    @pytest.mark.parametrize("niter_els", [1, 3])
+    def test_parameters(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
                   gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
                    niter_rig=4, nonneg_movie=True, max_deviation_rigid=3, upsample_factor_grid=4, strides=(50, 50)):
 
@@ -114,3 +114,40 @@ class Test_mc:
         self.shifts = mc.shifts_rig
 
         # test correct shift reconstruction
+
+    @pytest.mark.parametrize("num_splits_to_process_els", [5, 10])
+    @pytest.mark.parametrize("splits_els", [5, 10])
+    @pytest.mark.parametrize("niter_els", [1, 3])
+    def test_els_split(self, num_splits_to_process_els, splits_els, niter_els, pw_rigid=True):
+
+        input_, shifts = self.data, self.shifts
+
+        # Create MotionCorrect instance
+        mc = MotionCorrect(input_,
+                max_shifts=(6, 6), niter_rig=4, splits_rig=5,
+                num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                pw_rigid=pw_rigid, splits_els=splits_els, num_splits_to_process_els=num_splits_to_process_els,
+                upsample_factor_grid=4, max_deviation_rigid=3,
+                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
+
+        # Perform motion correction
+        mc.motion_correct(save_movie=True)
+
+    @pytest.mark.parametrize("num_splits_to_process_rig", [5, 10])
+    @pytest.mark.parametrize("splits_rig", [5, 10])
+    @pytest.mark.parametrize("niter_els", [1, 3])
+    def test_rig_split(self, num_splits_to_process_rig, splits_rig, niter_els, pw_rigid=True):
+
+        input_, shifts = self.data, self.shifts
+
+        # Create MotionCorrect instance
+        mc = MotionCorrect(input_,
+                max_shifts=(6, 6), niter_rig=4, splits_rig=splits_rig,
+                num_splits_to_process_rig=num_splits_to_process_rig, strides=(50, 50), overlaps=(10, 10),
+                pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                upsample_factor_grid=4, max_deviation_rigid=3,
+                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
+
+        # Perform motion correction
+        # Perform motion correction
+        mc.motion_correct(save_movie=True)

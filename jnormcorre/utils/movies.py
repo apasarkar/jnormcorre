@@ -311,6 +311,12 @@ class movie(ts.timeseries):
         ms_w = max_shift_w
         ms_h = max_shift_h
 
+        if ms_w >= w_i / 2:
+            raise ValueError(f"max_shift[0] must be smaller than half of image width")
+
+        if ms_h >= h_i / 2:
+            raise ValueError(f"max_shift[1] must be smaller than half of image height")
+
         if template is None:
             template = np.median(self, axis=0)
         else:

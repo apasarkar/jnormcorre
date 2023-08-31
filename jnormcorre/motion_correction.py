@@ -394,6 +394,8 @@ class MotionCorrect(object):
         if not isinstance(var_name_hdf5, str):
             raise ValueError(f"pleaes provide 'var_name_hdf5' as string")
 
+        # if max_shifts
+
         self.fname = fname
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
