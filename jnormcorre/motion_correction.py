@@ -306,7 +306,11 @@ class MotionCorrect(object):
         class implementing motion correction operations
        """
 
-    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, nonneg_movie=True, pw_rigid=False, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
+    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
+                 num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96),
+                 overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3,
+                 nonneg_movie=True, pw_rigid=False, var_name_hdf5='mov',
+                 indices=(slice(None), slice(None)), gSig_filt=None):
         """
         Constructor class for motion correction operations
 
@@ -378,7 +382,7 @@ class MotionCorrect(object):
         """
         if 'ndarray' in str(type(fname)):
             logging.info('Creating file for motion correction "tmp_mov_mot_corr.hdf5"')
-            movies.movie(fname).save('tmp_mov_mot_corr.hdf5')
+            movies.movie(fname).save('tmp_mov_mot_corr.hdf5', var_name_hdf5=var_name_hdf5)
             fname = ['tmp_mov_mot_corr.hdf5']
 
         if not isinstance(fname, list):
@@ -386,6 +390,9 @@ class MotionCorrect(object):
 
         if not isinstance(niter_els, int) or niter_els < 1:
             raise ValueError(f"please provide n_iter as an int of 1 or higher.")
+
+        if not isinstance(var_name_hdf5, str):
+            raise ValueError(f"pleaes provide 'var_name_hdf5' as string")
 
         self.fname = fname
         self.max_shifts = max_shifts

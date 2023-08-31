@@ -91,7 +91,7 @@ class Test_mc:
     @pytest.mark.parametrize("gSig_filt", [None]) # fails: , 5, 20 (20, 20)
     @pytest.mark.parametrize("overlaps", [(10, 10)]) # fails: , (24, 24)
     @pytest.mark.parametrize("pw_rigid", [True]) # , False
-    @pytest.mark.parametrize("min_mov", [-5]) # , False
+    @pytest.mark.parametrize("min_mov", [-5, 5, None])
     @pytest.mark.parametrize("niter_els", [1, 5])
     def test_file(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
                   gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
@@ -100,7 +100,7 @@ class Test_mc:
         input_, shifts = self.data, self.shifts
 
         # Create MotionCorrect instance
-        mc = MotionCorrect(input_, var_name_hdf5=None,
+        mc = MotionCorrect(input_,
                 max_shifts=max_shifts, niter_rig=niter_rig, splits_rig=splits_rig,
                 num_splits_to_process_rig=num_splits_to_process_rig, strides=strides, overlaps=overlaps,
                 pw_rigid=pw_rigid, splits_els=splits_els, num_splits_to_process_els=num_splits_to_process_els,
