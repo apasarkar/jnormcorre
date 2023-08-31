@@ -64,7 +64,7 @@ from skimage.transform import resize as resize_sk
 from skimage.transform import warp as warp_sk
 
 from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
-import jnormcorre.utils.movies
+import jnormcorre.utils.movies as movies
 from jnormcorre.utils.movies import load, load_iter
 
 import pathlib ##MOVE THIS ONE...
@@ -378,7 +378,7 @@ class MotionCorrect(object):
         """
         if 'ndarray' in str(type(fname)):
             logging.info('Creating file for motion correction "tmp_mov_mot_corr.hdf5"')
-            utils.movies.movie(fname).save('tmp_mov_mot_corr.hdf5')
+            movies.movie(fname).save('tmp_mov_mot_corr.hdf5')
             fname = ['tmp_mov_mot_corr.hdf5']
 
         if not isinstance(fname, list):
