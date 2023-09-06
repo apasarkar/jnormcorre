@@ -310,7 +310,7 @@ class MotionCorrect(object):
                  num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96),
                  overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3,
                  nonneg_movie=True, pw_rigid=False, var_name_hdf5='mov',
-                 indices=(slice(None), slice(None)), gSig_filt=None, bigtiff=False):
+                 indices=(slice(None), slice(None)), gSig_filt=None):
         """
         Constructor class for motion correction operations
 
@@ -413,8 +413,7 @@ class MotionCorrect(object):
         self.pw_rigid = bool(pw_rigid)
         self.var_name_hdf5 = var_name_hdf5
         self.indices = indices
-        self.bigtiff = bigtiff
-
+        
         #In case gSig_filt is not None, we define a kernel which we use for 1p processing:
         if gSig_filt is not None: 
             self.filter_kernel = get_kernel(gSig_filt)
@@ -508,8 +507,7 @@ class MotionCorrect(object):
                 nonneg_movie=self.nonneg_movie,
                 var_name_hdf5=self.var_name_hdf5,
                 indices=self.indices,
-                filter_kernel=self.filter_kernel,
-                bigtiff=self.bigtiff)
+                filter_kernel=self.filter_kernel)
             if template is None:
                 self.total_template_rig = _total_template_rig
 
@@ -565,8 +563,7 @@ class MotionCorrect(object):
                     upsample_factor_grid=self.upsample_factor_grid,
                     max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
                     num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
-                    save_movie=save_movie, nonneg_movie=self.nonneg_movie, var_name_hdf5=self.var_name_hdf5,
-                    indices=self.indices, filter_kernel=self.filter_kernel, bigtiff=self.bigtiff)
+                    save_movie=save_movie, nonneg_movie=self.nonneg_movie, var_name_hdf5=self.var_name_hdf5, indices=self.indices, filter_kernel=self.filter_kernel)
 
             if show_template:
                 pl.imshow(new_template_els)
@@ -2265,8 +2262,7 @@ tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct_ideal, in_axes = (0, N
 
 def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
                                template=None, save_movie_rigid=False, add_to_movie=None,
-                               nonneg_movie=False, subidx=slice(None, None, 1), var_name_hdf5='mov',
-                               indices=(slice(None), slice(None)), filter_kernel = None, bigtiff=False):
+                               nonneg_movie=False, subidx=slice(None, None, 1), var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel = None):
     """
     Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
 
@@ -2378,9 +2374,7 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
         fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
                                                              add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts, max_deviation_rigid=0,
                                                              save_movie=save_flag, base_name=base_name, subidx = subidx,
-                                                             num_splits=num_splits_to_process, nonneg_movie=nonneg_movie,
-                                                             var_name_hdf5=var_name_hdf5, indices=indices,
-                                                             filter_kernel=filter_kernel, bigtiff=bigtiff)
+                                                             num_splits=num_splits_to_process, nonneg_movie=nonneg_movie, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
         
         if filter_kernel is not None:
             new_templ = high_pass_filter_cv(filter_kernel, new_templ)
@@ -2401,8 +2395,7 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
                                  upsample_factor_grid=4, max_deviation_rigid=3,
                                  splits=56, num_splits_to_process=None, num_iter=1,
                                  template=None, save_movie=False, nonneg_movie=False,
-                                 var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel=None,
-                                 bigtiff=False):
+                                 var_name_hdf5='mov', indices=(slice(None), slice(None)),filter_kernel=None):
     """
     Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
 
@@ -2501,8 +2494,7 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
                                                             newoverlaps=newoverlaps, newstrides=newstrides,
                                                             upsample_factor_grid=upsample_factor_grid, order='F', save_movie=save_flag,
                                                             base_name=base_name, num_splits=num_splits_to_process,
-                                                            nonneg_movie=nonneg_movie, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel,
-                                                            bigtiff=bigtiff)
+                                                            nonneg_movie=nonneg_movie, var_name_hdf5=var_name_hdf5, indices=indices, filter_kernel=filter_kernel)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
         if filter_kernel is not None:
@@ -2580,7 +2572,7 @@ def regular_collate(batch):
     # print("the length of this batch is {}".format(len(batch)))
     return batch[0]
 
-def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
+def tile_and_correct_dataloader(param_list, split_constant=200):
     """Does motion correction on specified image frames
 
     Returns:
@@ -2654,7 +2646,17 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
 
                 
         if out_fname is not None:
-             tifffile.imwrite(out_fname, mc, append=True, metadata=None, bigtiff=bigtiff)
+
+            element_size_in_bytes = mc.dtype.itemsize
+            total_size_in_bytes = mc.size * element_size_in_bytes
+
+            # Check if total size is close to or exceeds 4 GB
+            if total_size_in_bytes >= (2 * 1024 * 1024 * 1024):
+                big_tiff=True
+            else:
+                big_tiff=False
+
+            tifffile.imwrite(out_fname, mc, append=True, metadata=None, bigtiff=big_tiff)
 
         new_temp = generate_template_chunk(mc)
         
@@ -2686,8 +2688,7 @@ def load_split_heuristic(d1, d2, T):
 def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
                                 max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
                                 upsample_factor_grid=4, order='F', save_movie=True,
-                                base_name=None, subidx = None, num_splits=None, nonneg_movie=False, var_name_hdf5='mov',
-                                indices=(slice(None), slice(None)), filter_kernel=None, bigtiff=False):
+                                base_name=None, subidx = None, num_splits=None, nonneg_movie=False, var_name_hdf5='mov', indices=(slice(None), slice(None)), filter_kernel=None):
     """
     TODO DOCUMENT
     """
@@ -2753,6 +2754,6 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     import time
     start_time = time.time()
     split_constant = load_split_heuristic(dims[0], dims[1], T)
-    res = tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
+    res = tile_and_correct_dataloader(pars, split_constant=split_constant)
     print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
