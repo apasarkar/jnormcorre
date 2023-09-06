@@ -311,6 +311,12 @@ class movie(ts.timeseries):
         ms_w = max_shift_w
         ms_h = max_shift_h
 
+        if ms_w >= w_i / 2:
+            raise ValueError(f"max_shift[0] must be smaller than half of image width")
+
+        if ms_h >= h_i / 2:
+            raise ValueError(f"max_shift[1] must be smaller than half of image height")
+
         if template is None:
             template = np.median(self, axis=0)
         else:
@@ -911,9 +917,6 @@ def load(file_name: Union[str, List[str]],
 
         elif extension in ('.hdf5', '.h5', '.nwb'):
            with h5py.File(file_name, "r") as f:
-                fkeys = list(f.keys())
-                if len(fkeys) == 1: # If the hdf5 file we're parsing has only one dataset inside it, ignore the arg and pick that dataset
-                    var_name_hdf5 = fkeys[0]
 
                 if extension == '.nwb': # Apparently nwb files are specially-formatted hdf5 files
                     try:
