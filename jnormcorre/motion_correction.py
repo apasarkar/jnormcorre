@@ -2651,7 +2651,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
             total_size_in_bytes = mc.size * element_size_in_bytes
 
             # Check if total size is close to or exceeds 4 GB
-            if total_size_in_bytes >= (4 * 1024 * 1024 * 1024):
+            if total_size_in_bytes >= (2 * 1024 * 1024 * 1024):
                 big_tiff=True
             else:
                 big_tiff=False
