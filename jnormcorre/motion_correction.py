@@ -2570,7 +2570,6 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
 
     Notes:
     Also writes corrected frames to the mmap file specified by out_fname (if not None)
-
     """
     # todo todocument
 
@@ -2587,11 +2586,17 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
     
     results_list = []
+    start_pt_save = 0
+    memmap_placeholder = None
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
         num_iters = math.ceil(data[0].shape[0]/split_constant)
         imgs_net, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
         add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
         nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel = data
+        if out_fname is not None:
+            inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2]) 
+            if memmap_placeholder is None:
+                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype)
         for j in range(num_iters):
             
             start_pt = split_constant * j
@@ -2634,7 +2639,9 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
 
                 
         if out_fname is not None:
-             tifffile.imwrite(out_fname, mc, append=True, metadata=None)
+            memmap_placeholder[start_pt_save:start_pt_save+mc.shape[0], :, :] = mc
+            start_pt_save += mc.shape[0]
+            memmap_placeholder.flush()
 
         new_temp = generate_template_chunk(mc)
         
