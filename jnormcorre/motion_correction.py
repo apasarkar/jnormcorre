@@ -83,6 +83,7 @@ import functools
 from functools import partial
 import time
 
+import random
 import multiprocessing
 
 
@@ -2720,7 +2721,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     shape_mov = (np.prod(dims), T)
     if num_splits is not None:
         num_splits = min(num_splits, len(idxs))
-        idxs = np.array(idxs)[np.random.randint(0, len(idxs), num_splits)]
+        idxs = random.sample(idxs, num_splits)
         save_movie = False
 
     if save_movie:
@@ -2745,7 +2746,7 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     pars = []
     for idx in idxs:
         logging.debug('Processing: frames: {}'.format(idx))
-        pars.append([fname, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
+        pars.append([fname, fname_tot, np.array(idx), shape_mov, template, strides, overlaps, max_shifts, np.array(
             add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
             newoverlaps, newstrides, nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel])
 
