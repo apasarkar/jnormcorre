@@ -64,7 +64,7 @@ from skimage.transform import resize as resize_sk
 from skimage.transform import warp as warp_sk
 
 from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
-import jnormcorre.utils.movies
+import jnormcorre.utils.movies as movies
 from jnormcorre.utils.movies import load, load_iter
 
 import pathlib ##MOVE THIS ONE...
@@ -205,7 +205,7 @@ def get_file_size(file_name, var_name_hdf5='mov'):
                 # Consider pulling a lot of the "data source" code out into one place
                 with h5py.File(file_name, "r") as f:
                     kk = list(f.keys())
-                    if len(kk) == 1:
+                    if len(kk) == 1 and var_name_hdf5 not in f:
                         siz = f[kk[0]].shape
                     elif var_name_hdf5 in f:
                         if extension == '.nwb':
@@ -306,7 +306,11 @@ class MotionCorrect(object):
         class implementing motion correction operations
        """
 
-    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14, num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, nonneg_movie=True, pw_rigid=False, var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None):
+    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
+                 num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96),
+                 overlaps=(32, 32), splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3,
+                 nonneg_movie=True, pw_rigid=False, var_name_hdf5='mov',
+                 indices=(slice(None), slice(None)), gSig_filt=None):
         """
         Constructor class for motion correction operations
 
@@ -378,11 +382,19 @@ class MotionCorrect(object):
         """
         if 'ndarray' in str(type(fname)):
             logging.info('Creating file for motion correction "tmp_mov_mot_corr.hdf5"')
-            utils.movies.movie(fname).save('tmp_mov_mot_corr.hdf5')
+            movies.movie(fname).save('tmp_mov_mot_corr.hdf5', var_name_hdf5=var_name_hdf5)
             fname = ['tmp_mov_mot_corr.hdf5']
 
         if not isinstance(fname, list):
             fname = [fname]
+
+        if not isinstance(niter_els, int) or niter_els < 1:
+            raise ValueError(f"please provide n_iter as an int of 1 or higher.")
+
+        if not isinstance(var_name_hdf5, str):
+            raise ValueError(f"pleaes provide 'var_name_hdf5' as string")
+
+        # if max_shifts
 
         self.fname = fname
         self.max_shifts = max_shifts
@@ -438,7 +450,7 @@ class MotionCorrect(object):
                 self.min_mov = mi
             else: 
                 self.min_mov = np.array([high_pass_filter_cv(m_, self.filter_kernel)
-                    for m_ in jnormcorre.utils.movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
+                    for m_ in movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
                                       subindices=slice(400))]).min()
 
 
@@ -1836,7 +1848,7 @@ def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_mo
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
-tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, None, None, None)))
+tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, (None, None), None)))
         
         
 # @partial(jit, static_argnums=(3,))
@@ -2318,7 +2330,7 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
 
     if template is None:
         if filter_kernel is not None:
-            m = jnormcorre.utils.movies.movie(
+            m = movies.movie(
                 np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m]))
             
         if not m.flags['WRITEABLE']:
@@ -2614,7 +2626,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200):
                     outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, upsample_factor_fft, add_to_movie)
+                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
                 mc[start_pt:end_pt, :, :] = outs[0]
                 temp_Nones_1 = [None for temp_i in range(outs[1].shape[0])]
                 shift_info.extend(list(zip(np.array(outs[1]), temp_Nones_1, temp_Nones_1)))
