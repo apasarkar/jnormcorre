@@ -12,12 +12,18 @@ from jnormcorre.motion_correction import MotionCorrect
 
 class Test_Simulation:
 
-    def test_init(self, frames=100, X=100, Y=100):
+    @pytest.mark.parametrize("frames", [10, 50, 100])
+    @pytest.mark.parametrize("X", [30, 60, 90, 120])
+    @pytest.mark.parametrize("Y", [30, 60, 90, 120])
+    def test_init(self, frames, X, Y):
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
                            blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
                            background_noise=1, shot_noise=0.2)
 
-    def test_run(self, frames=100, X=100, Y=100):
+    @pytest.mark.parametrize("frames", [10, 50, 100])
+    @pytest.mark.parametrize("X", [30, 60, 90, 120])
+    @pytest.mark.parametrize("Y", [30, 60, 90, 120])
+    def test_run(self, frames, X, Y):
 
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
                            blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
@@ -52,8 +58,8 @@ class Test_mc:
 
     def setup_method(self):
 
-        frames, X, Y = (25, 80, 80)
-        sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
+        self.frames, self.X, self.Y = (25, 95, 85)
+        sim = SimData(frames=self.frames, X=self.X, Y=self.Y, n_blobs=10, noise_amplitude=0.2,
                            blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
                            background_noise=1, shot_noise=0.2)
 
@@ -155,10 +161,10 @@ class Test_mc:
     @pytest.mark.parametrize("n_frames", [25, 100])
     @pytest.mark.parametrize("pw_rigid", [True, False])
     @pytest.mark.parametrize("max_drift", [(1e-1), (1e-4, 1e-2), (1e-3, 1e-2), (1e-3, 1e-1)])
-    def test_movement(self, n_frames, pw_rigid, max_drift, dim=80):
+    def test_movement(self, n_frames, pw_rigid, max_drift):
 
-        frames, X, Y = (n_frames, dim, dim)
-        max_shift = int(dim/2) - 1
+        frames, X, Y = (n_frames, self.X, self.Y)
+        max_shift = int(min(X, Y)/2) - 1
 
         # simulate movement artifacts
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
@@ -188,10 +194,10 @@ class Test_mc:
     @pytest.mark.parametrize("n_frames", [400])
     @pytest.mark.parametrize("pw_rigid", [True, False])
     @pytest.mark.parametrize("max_drift", [(1e-3, 1e-1), (1e-2, 1e-1)])
-    def test_movement_extreme(self, n_frames, pw_rigid, max_drift, dim=80):
+    def test_movement_extreme(self, n_frames, pw_rigid, max_drift):
 
-        frames, X, Y = (n_frames, dim, dim)
-        max_shift = int(dim/2) - 1
+        frames, X, Y = (n_frames, self.X, self.Y)
+        max_shift = int(min(X, Y)/2) - 1
 
         # simulate movement artifacts
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
