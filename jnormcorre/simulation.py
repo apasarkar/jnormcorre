@@ -14,6 +14,7 @@ class SimData:
 
         Parameters:
         - frames: Number of frames in the simulation.
+            NOTE: this parameter should NOT reflect the number of frames in a realistic dataset. Instead what we'd like to do here is take a base template image, apply some shifts, and quantify how well the alignment happens. Think of "frames" as the number of test cases. It probably should not be larger than, say, 100 frames
         - X, Y: Dimensions of the images.
         - n_blobs: Number of gaussian blobs (peaks or valleys) to add to the base image.
         - noise_amplitude: Amplitude of the noise in the base image.
@@ -82,7 +83,7 @@ class SimData:
 
         x = np.arange(X_padded)
         y = np.arange(Y_padded)
-        x, y = np.meshgrid(x, y)
+        x, y = np.meshgrid(x, y, indexing='ij')
 
         # Add random gaussian blobs (peaks or valleys) to the noise floor
         for _ in range(self.n_blobs):

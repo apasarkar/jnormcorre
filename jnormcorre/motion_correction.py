@@ -86,8 +86,6 @@ import time
 import random
 import multiprocessing
 
-
-
 ### General object for motion correction
 ## Use case: you have a good template (maybe you run registration on 10K frames, or you used a clever method to find a great template from data. Now you want to register lots of frames to this template. This object is a transparent way to use that functionality from this repo
 class frame_corrector():
@@ -149,6 +147,13 @@ class frame_corrector():
 
 ####PLACE IN FUNCTIONS######
 
+def verify_strides_and_overlaps(dim, stride, overlap):
+    assert stride > 0, "Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(stride)
+    assert overlap > 0, "Overlap value needs to be positive. Right now it is {}. See documentation".format(overlap)
+    assert dim > 0, "Dim needs to be positive. Right now the length along this FOV axis is {}. See documentation".format(dim)
+    assert stride < dim, "Stride must be less than the field of view dimension, otherwise this parameter is not meaningful for piecewise-rigid registration. Right now the value of stride is {} and the length of this axis of the FOV is {}. See documentation for more details.".format(stride, dim)
+    assert overlap < stride, "The degree of overlap must be less than the stride for piecewise-rigid registration. Right now, the value of overlap is {} and stride is {}. See documentation for more details".format(overlap, stride)
+    assert stride + overlap < dim, "The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(stride, overlap, dim)
 
 def get_file_size(file_name, var_name_hdf5='mov'):
     """ Computes the dimensions of a file or a list of files without loading
@@ -414,6 +419,7 @@ class MotionCorrect(object):
         self.var_name_hdf5 = var_name_hdf5
         self.indices = indices
         self.bigtiff = bigtiff
+        self.file_FOV_dims, self.file_num_frames = get_file_size(self.fname, self.var_name_hdf5)
         
         #In case gSig_filt is not None, we define a kernel which we use for 1p processing:
         if gSig_filt is not None: 
@@ -456,6 +462,9 @@ class MotionCorrect(object):
 
 
         if self.pw_rigid:
+            #Verify that the strides and overlaps are meaningfully defined
+            verify_strides_and_overlaps(self.file_FOV_dims[0], self.strides[0], self.overlaps[0])
+            verify_strides_and_overlaps(self.file_FOV_dims[1], self.strides[1], self.overlaps[1])
             self.motion_correct_pwrigid(template=template, save_movie=save_movie)
             b0 = np.ceil(np.maximum(np.max(np.abs(self.x_shifts_els)),
                                     np.max(np.abs(self.y_shifts_els))))
@@ -556,7 +565,7 @@ class MotionCorrect(object):
         self.templates_els:List = []
         self.x_shifts_els:List = []
         self.y_shifts_els:List = []
-
+        
         self.coord_shifts_els:List = []
         for name_cur in self.fname:
             _fname_tot_els, new_template_els, _templates_els,\
