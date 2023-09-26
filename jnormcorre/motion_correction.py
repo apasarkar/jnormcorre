@@ -309,8 +309,8 @@ def prepare_shape(mytuple: Tuple) -> Tuple:
 
 class MotionCorrect(object):
     """
-        class implementing motion correction operations
-       """
+    class implementing motion correction operations
+    """
 
     def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
                  num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32),
@@ -398,8 +398,6 @@ class MotionCorrect(object):
 
         if not isinstance(var_name_hdf5, str):
             raise ValueError(f"pleaes provide 'var_name_hdf5' as string")
-
-        # if max_shifts
 
         self.fname = fname
         self.max_shifts = max_shifts
@@ -2156,7 +2154,7 @@ def opencv_interpolation(img, dims, shift_img_x, shift_img_y, x_grid, y_grid, ad
     return m_reg - add_value
 
     
-# Note that jax does not have higher-order spline implemented, eventually switch to that
+# Note that jax does not have higher-order spline implemented, eventually switch to that if it's actually the case that it leads to better outcomes
 # @partial(jit, static_argnums=(2,3,4,5,7))
 def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
                      max_deviation_rigid, add_to_movie):
@@ -2187,8 +2185,6 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
 
         upsample_factor_fft: int
             resolution of fractional shifts
-
-        show_movie: boolean whether to visualize the original and corrected frame during motion correction
 
         max_deviation_rigid: int
             maximum deviation in shifts of each patch from the rigid shift (should not be large)

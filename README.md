@@ -47,7 +47,7 @@ If you use this method, please cite the accompanying [paper](https://www.biorxiv
 
 > _maskNMF: A denoise-sparsen-detect approach for extracting neural signals from dense imaging data_. (2023). A. Pasarkar\*, I. Kinsella, P. Zhou, M. Wu, D. Pan, J.L. Fan, Z. Wang, L. Abdeladim, D.S. Peterka, H. Adesnik, N. Ji, L. Paninski.
 
-These are some related implementations: 
+These are the original implementations:  
 - Matlab Implementation of Normcorre: https://github.com/flatironinstitute/NoRMCorre#ref
 
 - Python Implementation of Normcorre: https://github.com/flatironinstitute/CaImAn
