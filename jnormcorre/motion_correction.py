@@ -1,41 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-"""
-The functions apply_shifts_dft, register_translation, _compute_phasediff, and _upsampled_dft are from
-SIMA (https://github.com/losonczylab/sima), licensed under the  GNU GENERAL PUBLIC LICENSE, Version 2, 1991.
-These same functions were adapted from sckikit-image, licensed as follows:
-
-Copyright (C) 2011, the scikit-image team
- All rights reserved.
-
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are
- met:
-
-  1. Redistributions of source code must retain the above copyright
-     notice, this list of conditions and the following disclaimer.
-  2. Redistributions in binary form must reproduce the above copyright
-     notice, this list of conditions and the following disclaimer in
-     the documentation and/or other materials provided with the
-     distribution.
-  3. Neither the name of skimage nor the names of its contributors may be
-     used to endorse or promote products derived from this software without
-     specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
- IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
- INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- POSSIBILITY OF SUCH DAMAGE.
-"""
-
 import logging
 from builtins import map
 from builtins import range
@@ -48,7 +13,7 @@ import jax
 import torch
 from past.utils import old_div
 
-logging.basicConfig(level = logging.ERROR)
+logging.basicConfig(level=logging.ERROR)
 import numpy as np
 import os
 import pylab as pl
@@ -63,19 +28,21 @@ import math
 import jax.numpy as jnp
 from jax import jit, vmap
 from functools import partial
-import time
 import random
+
 
 ### General object for motion correction
 ## Use case: you have a good template (maybe you run registration on 10K frames, or you used a clever method to find a great template from data. Now you want to register lots of frames to this template. This object is a transparent way to use that functionality from this repo
 class frame_corrector():
     def __init__(self, corrector, batching=100):
-        '''
-        Inputs: 
-            corrector: jnormcorre motion correction object (jnormcorre.motion_correction). This object stores the necessary info to do motion correction (templates, shifts, overlaps, etc.)
-            batching: number of frames to register at a time. This helps exploit the JIT acceleration of motion correction (via caching) and but more importantly prevents the GPU from being overloaded with frames.
-            register_flag: If this is false, this object does not register data
-        '''
+        """
+        Use Case: You have a good template
+        Inputs: corrector: jnormcorre motion correction object (jnormcorre.motion_correction). This object stores the
+        necessary info to do motion correction (templates, shifts, overlaps, etc.) batching: number of frames to
+        register at a time. This helps exploit the JIT acceleration of motion correction (via caching) and more
+        importantly prevents the GPU from being overloaded with frames. register_flag: If this is false, this object
+        does not register data
+        """
 
         if corrector.pw_rigid:
             self.corr_method = "pwrigid"
@@ -84,7 +51,7 @@ class frame_corrector():
 
         self.max_shifts = corrector.max_shifts
 
-        self.upsample_factor_fft = 10 ##NOTE: This is a hardcoded value in the original normcorre method, eventually actually treat it like a constant
+        self.upsample_factor_fft = 10  ##NOTE: This is a hardcoded value in the original normcorre method, eventually actually treat it like a constant
         self.add_to_movie = -corrector.min_mov
         self.strides = corrector.strides
         self.overlaps = corrector.overlaps
@@ -93,12 +60,16 @@ class frame_corrector():
 
         if self.corr_method == "pwrigid":
             self.template = corrector.total_template_els
-            self.registration_method = jit(vmap(tile_and_correct_ideal, in_axes = (0, None, None, None, None, None, None, None, None, None)), static_argnums=(2,3,4,5,7))
+            self.registration_method = jit(
+                vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)),
+                static_argnums=(2, 3, 4, 5, 7))
 
             def simplified_registration_func(frames):
                 return self.registration_method(frames, self.template, self.strides[0], self.strides[1], \
-                                                                     self.overlaps[0], self.overlaps[1], self.max_shifts,self.upsample_factor_fft, \
-                                                                     self.max_deviation_rigid, self.add_to_movie)[0]
+                                                self.overlaps[0], self.overlaps[1], self.max_shifts,
+                                                self.upsample_factor_fft, \
+                                                self.max_deviation_rigid, self.add_to_movie)[0]
+
             self.jitted_method = simplified_registration_func
 
         elif self.corr_method == "rigid":
@@ -108,6 +79,7 @@ class frame_corrector():
 
             def simplified_registration_func(frames):
                 return self.registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
+
             self.jitted_method = jit(simplified_registration_func)
         else:
             raise ValueError("Invalid method provided. Must either be pwrigid or rigid")
@@ -124,16 +96,24 @@ class frame_corrector():
         return self.jitted_method(frames)
 
 
-
-####PLACE IN FUNCTIONS######
-
 def verify_strides_and_overlaps(dim, stride, overlap):
-    assert stride > 0, "Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(stride)
-    assert overlap > 0, "Overlap value needs to be positive. Right now it is {}. See documentation".format(overlap)
-    assert dim > 0, "Dim needs to be positive. Right now the length along this FOV axis is {}. See documentation".format(dim)
-    assert stride < dim, "Stride must be less than the field of view dimension, otherwise this parameter is not meaningful for piecewise-rigid registration. Right now the value of stride is {} and the length of this axis of the FOV is {}. See documentation for more details.".format(stride, dim)
-    assert overlap < stride, "The degree of overlap must be less than the stride for piecewise-rigid registration. Right now, the value of overlap is {} and stride is {}. See documentation for more details".format(overlap, stride)
-    assert stride + overlap < dim, "The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(stride, overlap, dim)
+    if not stride > 0:
+        raise ValueError("Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(
+        stride))
+    if not overlap > 0:
+        raise ValueError("Overlap value needs to be positive. Right now it is {}. See documentation".format(overlap))
+    if not dim > 0:
+        raise ValueError("Dim needs to be positive. Right now the length along this FOV axis is {}. See documentation".format(
+        dim))
+    if not stride < dim:
+        raise ValueError("Stride must be less than the field of view dimension, otherwise this parameter is not meaningful for piecewise-rigid registration. Right now the value of stride is {} and the length of this axis of the FOV is {}. See documentation for more details.".format(
+        stride, dim))
+    if not overlap < stride:
+        raise ValueError("The degree of overlap must be less than the stride for piecewise-rigid registration. Right now, the value of overlap is {} and stride is {}. See documentation for more details".format(
+        overlap, stride))
+    if not stride + overlap < dim:
+        raise ValueError("The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(
+        stride, overlap, dim))
 
 def get_file_size(file_name, var_name_hdf5='mov'):
     """ Computes the dimensions of a file or a list of files without loading
@@ -155,7 +135,7 @@ def get_file_size(file_name, var_name_hdf5='mov'):
     """
     if isinstance(file_name, pathlib.Path):
         # We want to support these as input, but str has a broader set of operations that we'd like to use, so let's just convert.
-	# (specifically, filePath types don't support subscripting)
+        # (specifically, filePath types don't support subscripting)
         file_name = str(file_name)
     if isinstance(file_name, str):
         if os.path.exists(file_name):
@@ -185,7 +165,7 @@ def get_file_size(file_name, var_name_hdf5='mov'):
             elif extension == '.mmap':
                 filename = os.path.split(file_name)[-1]
                 Yr, dims, T = load_memmap(os.path.join(
-                        os.path.split(file_name)[0], filename))
+                    os.path.split(file_name)[0], filename))
             elif extension in ('.h5', '.hdf5', '.nwb'):
                 # FIXME this doesn't match the logic in movies.py:load()
                 # Consider pulling a lot of the "data source" code out into one place
@@ -243,7 +223,7 @@ def get_file_size(file_name, var_name_hdf5='mov'):
             dims, T = get_file_size(file_name[0], var_name_hdf5=var_name_hdf5)
         else:
             dims, T = zip(*[get_file_size(fn, var_name_hdf5=var_name_hdf5)
-                for fn in file_name])
+                            for fn in file_name])
             if len(set(dims)) > 1:
                 raise Exception('Files have FOVs with different sizes')
             else:
@@ -263,6 +243,7 @@ def memmap_frames_filename(basename: str, dims: Tuple, frames: int, order: str =
     else:
         dimfield_2 = 1
     return f"{basename}_d1_{dimfield_0}_d2_{dimfield_1}_d3_{dimfield_2}_order_{order}_frames_{frames}_.mmap"
+
 
 def tiff_frames_filename(basename: str, dims: Tuple, frames: int, order: str = 'F') -> str:
     # Some functions calling this have the first part of *their* dims Tuple be the number of frames.
@@ -284,7 +265,6 @@ def prepare_shape(mytuple: Tuple) -> Tuple:
     return tuple(map(lambda x: np.uint64(x), mytuple))
 
 
-
 ####### END OF PLACE IN FUNCTIONS #######
 
 class MotionCorrect(object):
@@ -293,7 +273,7 @@ class MotionCorrect(object):
     """
 
     def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
-                 num_splits_to_process_rig=None,num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32),
+                 num_splits_to_process_rig=None, num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32),
                  splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, nonneg_movie=True, pw_rigid=False,
                  var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None, bigtiff=False):
         """
@@ -399,7 +379,7 @@ class MotionCorrect(object):
         self.bigtiff = bigtiff
         self.file_FOV_dims, self.file_num_frames = get_file_size(self.fname, self.var_name_hdf5)
 
-        #In case gSig_filt is not None, we define a kernel which we use for 1p processing:
+        # In case gSig_filt is not None, we define a kernel which we use for 1p processing:
         if gSig_filt is not None:
             self.filter_kernel = get_kernel(gSig_filt)
         else:
@@ -418,11 +398,8 @@ class MotionCorrect(object):
             save_movie: bool, default: False
                 flag for saving motion corrected file(s) as memory mapped file(s)
 
-        Returns:
-            self
         """
-        # TODO: Review the docs here, and also why we would ever return self
-        #       from a method that is not a constructor
+
         if self.min_mov is None:
             if self.filter_kernel is None:
                 iterator = load_iter(self.fname[0], var_name_hdf5=self.var_name_hdf5)
@@ -435,12 +412,11 @@ class MotionCorrect(object):
                 self.min_mov = mi
             else:
                 self.min_mov = np.array([high_pass_filter_cv(m_, self.filter_kernel)
-                    for m_ in movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
-                                      subindices=slice(400))]).min()
-
+                                         for m_ in movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
+                                                               subindices=slice(400))]).min()
 
         if self.pw_rigid:
-            #Verify that the strides and overlaps are meaningfully defined
+            # Verify that the strides and overlaps are meaningfully defined
             verify_strides_and_overlaps(self.file_FOV_dims[0], self.strides[0], self.overlaps[0])
             verify_strides_and_overlaps(self.file_FOV_dims[1], self.strides[1], self.overlaps[1])
             self.motion_correct_pwrigid(template=template, save_movie=save_movie)
@@ -478,9 +454,9 @@ class MotionCorrect(object):
         logging.debug('Entering Rigid Motion Correction')
         logging.debug(-self.min_mov)  # XXX why the minus?
         self.total_template_rig = template
-        self.templates_rig:List = []
-        self.fname_tot_rig:List = []
-        self.shifts_rig:List = []
+        self.templates_rig: List = []
+        self.fname_tot_rig: List = []
+        self.shifts_rig: List = []
 
         for fname_cur in self.fname:
             _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = motion_correct_batch_rigid(
@@ -504,7 +480,8 @@ class MotionCorrect(object):
             self.fname_tot_rig += [_fname_tot_rig]
             self.shifts_rig += _shifts_rig
 
-    def motion_correct_pwrigid(self, save_movie:bool=True, template:np.ndarray=None, show_template:bool=False) -> None:
+    def motion_correct_pwrigid(self, save_movie: bool = True, template: np.ndarray = None,
+                               show_template: bool = False) -> None:
         """Perform pw-rigid motion correction
 
         Args:
@@ -539,21 +516,22 @@ class MotionCorrect(object):
         else:
             self.total_template_els = template
 
-        self.fname_tot_els:List = []
-        self.templates_els:List = []
-        self.x_shifts_els:List = []
-        self.y_shifts_els:List = []
+        self.fname_tot_els: List = []
+        self.templates_els: List = []
+        self.x_shifts_els: List = []
+        self.y_shifts_els: List = []
 
-        self.coord_shifts_els:List = []
+        self.coord_shifts_els: List = []
         for name_cur in self.fname:
-            _fname_tot_els, new_template_els, _templates_els,\
+            _fname_tot_els, new_template_els, _templates_els, \
                 _x_shifts_els, _y_shifts_els, _z_shifts_els, _coord_shifts_els = motion_correct_batch_pwrigid(
-                    name_cur, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
-                    upsample_factor_grid=self.upsample_factor_grid,
-                    max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
-                    num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
-                    save_movie=save_movie, nonneg_movie=self.nonneg_movie, var_name_hdf5=self.var_name_hdf5,
-                    indices=self.indices, filter_kernel=self.filter_kernel, bigtiff=self.bigtiff)
+                name_cur, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
+                upsample_factor_grid=self.upsample_factor_grid,
+                max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
+                num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter,
+                template=self.total_template_els,
+                save_movie=save_movie, nonneg_movie=self.nonneg_movie, var_name_hdf5=self.var_name_hdf5,
+                indices=self.indices, filter_kernel=self.filter_kernel, bigtiff=self.bigtiff)
 
             if show_template:
                 pl.imshow(new_template_els)
@@ -570,8 +548,6 @@ class MotionCorrect(object):
             self.x_shifts_els += _x_shifts_els
             self.y_shifts_els += _y_shifts_els
             self.coord_shifts_els += _coord_shifts_els
-
-
 
 
 def bin_median(mat, window=10, exclude_nans=True):
@@ -609,14 +585,11 @@ def bin_median(mat, window=10, exclude_nans=True):
 
 def _upsampled_dft_full(data, upsampled_region_size, upsample_factor, axis_offsets):
     return np.array(_upsampled_dft_jax(data, upsampled_region_size,
-                   upsample_factor, axis_offsets))
-
-def _upsampled_dft_no_size(data, upsample_factor):
-    return np.array(_upsampled_dft_jax_no_size(data, upsample_factor))
+                                       upsample_factor, axis_offsets))
 
 # @partial(jit, static_argnums=(1,))
 def _upsampled_dft_jax(data, upsampled_region_size,
-                   upsample_factor, axis_offsets):
+                       upsample_factor, axis_offsets):
     """
     adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
 
@@ -688,34 +661,30 @@ def _upsampled_dft_jax(data, upsampled_region_size,
                 The upsampled DFT of the specified region.
     """
 
-
-
-    #Calculate col_kernel
+    # Calculate col_kernel
     multiplier = (-1j * 2 * jnp.pi / (data.shape[1] * upsample_factor))
     shifted = jnp.fft.ifftshift(jnp.arange(data.shape[1]))
     shifted = jnp.expand_dims(shifted, axis=1)
 
-    #ifftshift(np.arange(data.shape[1]))[:, None] - np.floor(old_div(data.shape[1], 2))
-    term_A = shifted - jnp.floor(data.shape[1]/2)
+    term_A = shifted - jnp.floor(data.shape[1] / 2)
 
-    term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis = 0) - axis_offsets[1]
+    term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis=0) - axis_offsets[1]
 
     col_kernel = jnp.exp(
         multiplier * jnp.dot(term_A, term_B)
     )
 
-
     multiplier = (-1j * 2 * jnp.pi / (data.shape[0] * upsample_factor))
 
     term_A = jnp.expand_dims(jnp.arange(upsampled_region_size), 1) - axis_offsets[0]
-    term_B = jnp.expand_dims(jnp.fft.ifftshift(jnp.arange(data.shape[0])), axis=0) - jnp.floor(data.shape[0]/2)
+    term_B = jnp.expand_dims(jnp.fft.ifftshift(jnp.arange(data.shape[0])), axis=0) - jnp.floor(data.shape[0] / 2)
 
     row_kernel = jnp.exp(
         (multiplier) * jnp.dot(term_A, term_B)
     )
 
-    output = jnp.tensordot(row_kernel, data, axes = [1,0])
-    output = jnp.tensordot(output, col_kernel, axes = [1,0])
+    output = jnp.tensordot(row_kernel, data, axes=[1, 0])
+    output = jnp.tensordot(output, col_kernel, axes=[1, 0])
 
     return output
 
@@ -793,37 +762,33 @@ def _upsampled_dft_jax_no_size(data, upsample_factor):
                 The upsampled DFT of the specified region.
     """
 
-
     upsampled_region_size = 1
-
 
     multiplier = (-1j * 2 * jnp.pi / (data.shape[1] * upsample_factor))
     shifted = jnp.fft.ifftshift(jnp.arange(data.shape[1]))
     shifted = jnp.expand_dims(shifted, axis=1)
 
-    term_A = shifted - jnp.floor(data.shape[1]/2)
+    term_A = shifted - jnp.floor(data.shape[1] / 2)
 
-    term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis = 0) - 0
+    term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis=0) - 0
 
     col_kernel = jnp.exp(
         multiplier * jnp.dot(term_A, term_B)
     )
 
-
     multiplier = (-1j * 2 * jnp.pi / (data.shape[0] * upsample_factor))
 
     term_A = jnp.expand_dims(jnp.arange(upsampled_region_size), 1) - 0
-    term_B = jnp.expand_dims(jnp.fft.ifftshift(jnp.arange(data.shape[0])), axis=0) - jnp.floor(data.shape[0]/2)
+    term_B = jnp.expand_dims(jnp.fft.ifftshift(jnp.arange(data.shape[0])), axis=0) - jnp.floor(data.shape[0] / 2)
 
     row_kernel = jnp.exp(
         (multiplier) * jnp.dot(term_A, term_B)
     )
 
-    output = jnp.tensordot(row_kernel, data, axes = [1,0])
-    output = jnp.tensordot(output, col_kernel, axes = [1,0])
+    output = jnp.tensordot(row_kernel, data, axes=[1, 0])
+    output = jnp.tensordot(output, col_kernel, axes=[1, 0])
 
     return output
-
 
 
 ### CODE FOR REGISTER TRANSLATION FIRST CALL
@@ -838,15 +803,6 @@ def _compute_phasediff(cross_correlation_max):
     
     '''
     return jnp.angle(cross_correlation_max)
-
-
-# #Eventually get rid of this wrapper..
-def get_freq_comps(src_image, target_image):
-    a, b = get_freq_comps_jax(src_image, target_image)
-    return np.array(a, dtype=np.complex128), np.array(b, dtype=np.complex128)
-
-# def format_array(x):
-#     return np.array([np.real(x), np.imag(x)])
 
 # @partial(jit)
 def get_freq_comps_jax(src_image, target_image):
@@ -868,8 +824,9 @@ def threshold_dim1(img, ind):
 
     prod = row_ind_first + row_ind_second
 
-    broadcasted = jnp.broadcast_to(jnp.expand_dims(prod, axis = 1), img.shape)
+    broadcasted = jnp.broadcast_to(jnp.expand_dims(prod, axis=1), img.shape)
     return broadcasted * img
+
 
 # @partial(jit)
 def threshold_dim2(img, ind):
@@ -883,9 +840,11 @@ def threshold_dim2(img, ind):
     broadcasted = jnp.broadcast_to(jnp.expand_dims(prod, axis=0), img.shape)
     return img * broadcasted
 
+
 # @partial(jit)
 def subtract_values(a, b):
     return a - b
+
 
 # @partial(jit)
 def return_identity(a, b):
@@ -993,7 +952,6 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     shape = src_freq.shape
     image_product = jnp.multiply(src_freq, jnp.conj(target_freq))
 
-
     cross_correlation = jnp.fft.ifftn(image_product)
 
     # Locate maximum
@@ -1002,10 +960,9 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     new_cross_corr = threshold_dim2(new_cross_corr, max_shifts[1])
 
     maxima = jnp.unravel_index(jnp.argmax(new_cross_corr),
-                              cross_correlation.shape)
+                               cross_correlation.shape)
 
-    midpoints = jnp.array([jnp.fix(shape[0]/2), jnp.fix(shape[1]/2)])
-
+    midpoints = jnp.array([jnp.fix(shape[0] / 2), jnp.fix(shape[1] / 2)])
 
     shifts = jnp.array(maxima, dtype=jnp.float32)
 
@@ -1013,20 +970,19 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     second_shift = jax.lax.cond(shifts[1] > midpoints[1], subtract_values, return_identity, *(shifts[1], shape[1]))
     shifts = jnp.array([first_shift, second_shift])
 
-
     shifts = jnp.round(shifts * upsample_factor) / upsample_factor
-    upsampled_region_size = int(upsample_factor*1.5 + 0.5)
+    upsampled_region_size = int(upsample_factor * 1.5 + 0.5)
     # Center of output array at dftshift + 1
-    dftshift = jnp.fix(upsampled_region_size/ 2.0)
+    dftshift = jnp.fix(upsampled_region_size / 2.0)
     upsample_factor = jnp.array(upsample_factor, dtype=jnp.float32)
     normalization = (src_freq.size * upsample_factor ** 2)
     # Matrix multiply DFT around the current shift estimate
     sample_region_offset = dftshift - shifts * upsample_factor
 
     cross_correlation = _upsampled_dft_jax(image_product.conj(),
-                                       upsampled_region_size,
-                                       upsample_factor,
-                                       sample_region_offset).conj()
+                                           upsampled_region_size,
+                                           upsample_factor,
+                                           sample_region_offset).conj()
     cross_correlation /= normalization
     # Locate maximum and map back to original pixel grid
     maxima = jnp.array(jnp.unravel_index(
@@ -1043,15 +999,15 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     shifts = shifts * shape_new
     return shifts, src_freq, _compute_phasediff(CCmax)
 
-### END OF CODE FOR REGISTER TRANSLATION FIRST CALL
 
+### END OF CODE FOR REGISTER TRANSLATION FIRST CALL
 
 
 ### START OF CODE FOR REGISTER TRANSLATION SECOND CALL
 
 # @partial(jit, static_argnums=(1,))
 def _upsampled_dft_jax_full(data, upsampled_region_size,
-                   upsample_factor, axis_offsets):
+                            upsample_factor, axis_offsets):
     """
     adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
 
@@ -1123,34 +1079,31 @@ def _upsampled_dft_jax_full(data, upsampled_region_size,
                 The upsampled DFT of the specified region.
     """
 
-
-
-    #Calculate col_kernel
+    # Calculate col_kernel
     multiplier = (-1j * 2 * jnp.pi / (data.shape[1] * upsample_factor))
     shifted = jnp.fft.ifftshift(jnp.arange(data.shape[1]))
     shifted = jnp.expand_dims(shifted, axis=1)
 
-    #ifftshift(np.arange(data.shape[1]))[:, None] - np.floor(old_div(data.shape[1], 2))
-    term_A = shifted - jnp.floor(data.shape[1]/2)
+    # ifftshift(np.arange(data.shape[1]))[:, None] - np.floor(old_div(data.shape[1], 2))
+    term_A = shifted - jnp.floor(data.shape[1] / 2)
 
-    term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis = 0) - axis_offsets[1]
+    term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis=0) - axis_offsets[1]
 
     col_kernel = jnp.exp(
         multiplier * jnp.dot(term_A, term_B)
     )
 
-
     multiplier = (-1j * 2 * jnp.pi / (data.shape[0] * upsample_factor))
 
     term_A = jnp.expand_dims(jnp.arange(upsampled_region_size), 1) - axis_offsets[0]
-    term_B = jnp.expand_dims(jnp.fft.ifftshift(jnp.arange(data.shape[0])), axis=0) - jnp.floor(data.shape[0]/2)
+    term_B = jnp.expand_dims(jnp.fft.ifftshift(jnp.arange(data.shape[0])), axis=0) - jnp.floor(data.shape[0] / 2)
 
     row_kernel = jnp.exp(
         (multiplier) * jnp.dot(term_A, term_B)
     )
 
-    output = jnp.tensordot(row_kernel, data, axes = [1,0])
-    output = jnp.tensordot(output, col_kernel, axes = [1,0])
+    output = jnp.tensordot(row_kernel, data, axes=[1, 0])
+    output = jnp.tensordot(output, col_kernel, axes=[1, 0])
 
     return output
 
@@ -1162,23 +1115,24 @@ def threshold_shifts_0_if(new_cross_corr, shift_ub, shift_lb):
     first_thres = np.arange(a) < shift_ub
     second_thres = np.arange(a) >= a + shift_lb
     prod = first_thres + second_thres
-    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis = 1),\
+    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis=1), \
                                      new_cross_corr.shape)
     return new_cross_corr * expanded_prod
 
+
 # @partial(jit)
 def threshold_shifts_0_else(new_cross_corr, shift_ub, shift_lb):
-    #In this case shift_lb is nonnegative OR shift_ub is negative, we can go case by case
+    # In this case shift_lb is nonnegative OR shift_ub is negative, we can go case by case
     a, b = new_cross_corr.shape
-    lb_threshold = jax.lax.cond(shift_lb >= 0, lambda p, q : q,\
-                                lambda p, q : p + q, *(a, shift_lb))
+    lb_threshold = jax.lax.cond(shift_lb >= 0, lambda p, q: q, \
+                                lambda p, q: p + q, *(a, shift_lb))
     first_thres = np.arange(a) >= lb_threshold
-    ub_threshold = jax.lax.cond(shift_ub >= 0, lambda p, q: q,\
+    ub_threshold = jax.lax.cond(shift_ub >= 0, lambda p, q: q, \
                                 lambda p, q: p + q, *(a, shift_ub))
 
     second_thres = np.arange(a) < ub_threshold
     prod = first_thres * second_thres
-    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis = 1),\
+    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis=1), \
                                      new_cross_corr.shape)
     return new_cross_corr * expanded_prod
 
@@ -1190,30 +1144,31 @@ def threshold_shifts_1_if(new_cross_corr, shift_ub, shift_lb):
     first_thres = np.arange(b) < shift_ub
     second_thres = np.arange(b) >= b + shift_lb
     prod = first_thres + second_thres
-    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis = 0),\
+    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis=0), \
                                      new_cross_corr.shape)
     return new_cross_corr * expanded_prod
 
+
 # @partial(jit)
 def threshold_shifts_1_else(new_cross_corr, shift_ub, shift_lb):
-    #In this case shift_lb is nonnegative OR shift_ub is negative, we can go case by case
+    # In this case shift_lb is nonnegative OR shift_ub is negative, we can go case by case
     a, b = new_cross_corr.shape
-    lb_threshold = jax.lax.cond(shift_lb >= 0, lambda p, q : q,\
-                                lambda p, q : p + q, *(b, shift_lb))
+    lb_threshold = jax.lax.cond(shift_lb >= 0, lambda p, q: q, \
+                                lambda p, q: p + q, *(b, shift_lb))
     first_thres = np.arange(b) >= lb_threshold
-    ub_threshold = jax.lax.cond(shift_ub >= 0, lambda p, q: q,\
+    ub_threshold = jax.lax.cond(shift_ub >= 0, lambda p, q: q, \
                                 lambda p, q: p + q, *(a, shift_ub))
 
     second_thres = np.arange(b) < ub_threshold
     prod = first_thres * second_thres
-    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis = 0),\
+    expanded_prod = jnp.broadcast_to(jnp.expand_dims(prod, axis=0), \
                                      new_cross_corr.shape)
     return new_cross_corr * expanded_prod
 
 
 # @partial(jit, static_argnums=(2,))
-def register_translation_jax_full(src_image, target_image, upsample_factor,\
-                                  shifts_lb,shifts_ub,max_shifts=(10, 10)):
+def register_translation_jax_full(src_image, target_image, upsample_factor, \
+                                  shifts_lb, shifts_ub, max_shifts=(10, 10)):
     """
 
     adapted from SIMA (https://github.com/losonczylab) and the
@@ -1313,7 +1268,6 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
     shape = src_freq.shape
     image_product = jnp.multiply(src_freq, jnp.conj(target_freq))
 
-
     cross_correlation = jnp.fft.ifftn(image_product)
 
     # Locate maximum
@@ -1329,11 +1283,10 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
                                   threshold_shifts_1_if, threshold_shifts_1_else, \
                                   *(new_cross_corr, shifts_ub[1], shifts_lb[1]))
 
-
     maxima = jnp.unravel_index(jnp.argmax(new_cross_corr),
-                              cross_correlation.shape)
+                               cross_correlation.shape)
 
-    midpoints = jnp.array([jnp.fix(shape[0]/2), jnp.fix(shape[1]/2)])
+    midpoints = jnp.array([jnp.fix(shape[0] / 2), jnp.fix(shape[1] / 2)])
 
     shifts = jnp.array(maxima, dtype=jnp.float32)
 
@@ -1341,20 +1294,19 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
     second_shift = jax.lax.cond(shifts[1] > midpoints[1], subtract_values, return_identity, *(shifts[1], shape[1]))
     shifts = jnp.array([first_shift, second_shift])
 
-
     shifts = jnp.round(shifts * upsample_factor) / upsample_factor
-    upsampled_region_size = int(upsample_factor*1.5 + 0.5)
+    upsampled_region_size = int(upsample_factor * 1.5 + 0.5)
     # Center of output array at dftshift + 1
-    dftshift = jnp.fix(upsampled_region_size/ 2.0)
+    dftshift = jnp.fix(upsampled_region_size / 2.0)
     upsample_factor = jnp.array(upsample_factor, dtype=jnp.float32)
     normalization = (src_freq.size * upsample_factor ** 2)
     # Matrix multiply DFT around the current shift estimate
     sample_region_offset = dftshift - shifts * upsample_factor
 
     cross_correlation = _upsampled_dft_jax_full(image_product.conj(),
-                                       upsampled_region_size,
-                                       upsample_factor,
-                                       sample_region_offset).conj()
+                                                upsampled_region_size,
+                                                upsample_factor,
+                                                sample_region_offset).conj()
     cross_correlation /= normalization
     # Locate maximum and map back to original pixel grid
     maxima = jnp.array(jnp.unravel_index(
@@ -1365,8 +1317,6 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
     shifts = shifts + maxima / upsample_factor
     CCmax = cross_correlation.max()
 
-
-
     # If its only one row or column the shift along that dimension has no
     # effect. We set to zero.
     shape_new = jax.nn.relu(jnp.array(shape) - 1) > 0
@@ -1374,194 +1324,7 @@ def register_translation_jax_full(src_image, target_image, upsample_factor,\
 
     return shifts, src_freq, _compute_phasediff(CCmax)
 
-# vmap_register_translation = jit(vmap(register_translation_jax_full,\
-#                                      in_axes=(0,0, None, None, None, None)), static_argnums=(2,))
-
-vmap_register_translation = vmap(register_translation_jax_full, in_axes=(0,0, None, None, None, None))
-
-
-### END OF CODE FOR REGSISTER TRANSLATION SECOND CALL
-
-def register_translation(src_image, target_image, upsample_factor=1,
-                         space="real", shifts_lb=None, shifts_ub=None, max_shifts=(10, 10)):
-    """
-
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-    Efficient subpixel image translation registration by cross-correlation.
-
-    This code gives the same precision as the FFT upsampled cross-correlation
-    in a fraction of the computation time and with reduced memory requirements.
-    It obtains an initial estimate of the cross-correlation peak by an FFT and
-    then refines the shift estimation by upsampling the DFT only in a small
-    neighborhood of that estimate by means of a matrix-multiply DFT.
-
-    Args:
-        src_image : ndarray
-            Reference image.
-
-        target_image : ndarray
-            Image to register.  Must be same dimensionality as ``src_image``.
-
-        upsample_factor : int, optional
-            Upsampling factor. Images will be registered to within
-            ``1 / upsample_factor`` of a pixel. For example
-            ``upsample_factor == 20`` means the images will be registered
-            within 1/20th of a pixel.  Default is 1 (no upsampling)
-
-        space : string, one of "real" or "fourier"
-            Defines how the algorithm interprets input data.  "real" means data
-            will be FFT'd to compute the correlation, while "fourier" data will
-            bypass FFT of input data.  Case insensitive.
-
-    Returns:
-        shifts : ndarray
-            Shift vector (in pixels) required to register ``target_image`` with
-            ``src_image``.  Axis ordering is consistent with numpy (e.g. Z, Y, X)
-
-        error : float
-            Translation invariant normalized RMS error between ``src_image`` and
-            ``target_image``.
-
-        phasediff : float
-            Global phase difference between the two images (should be
-            zero if images are non-negative).
-
-    Raises:
-     NotImplementedError "Error: register_translation only supports "
-                                  "subpixel registration for 2D images"
-
-     ValueError "Error: images must really be same size for "
-                         "register_translation"
-
-     ValueError "Error: register_translation only knows the \"real\" "
-                         "and \"fourier\" values for the ``space`` argument."
-
-    References:
-    .. [1] Manuel Guizar-Sicairos, Samuel T. Thurman, and James R. Fienup,
-           "Efficient subpixel image registration algorithms,"
-           Optics Letters 33, 156-158 (2008).
-    """
-    '''
-    src_image, target_image, upsample_factor=1,
-                         space="real", shifts_lb=None, shifts_ub=None, max_shifts=(10, 10)
-    '''
-    ##Now, must FFT the data:
-    src_freq, target_freq = get_freq_comps(src_image, target_image)
-
-    # Whole-pixel shift - Compute cross-correlation by an IFFT
-    shape = src_freq.shape
-    image_product = jnp.multiply(src_freq, jnp.conj(target_freq))
-
-
-    cross_correlation = jnp.fft.ifftn(image_product)
-
-    # Locate maximum
-    new_cross_corr = np.abs(cross_correlation)
-
-    if (shifts_lb is not None) or (shifts_ub is not None):
-
-        if (shifts_lb[0] < 0) and (shifts_ub[0] >= 0):
-            new_cross_corr[shifts_ub[0]:shifts_lb[0], :] = 0
-        else:
-            new_cross_corr[:shifts_lb[0], :] = 0
-            new_cross_corr[shifts_ub[0]:, :] = 0
-
-        if (shifts_lb[1] < 0) and (shifts_ub[1] >= 0):
-            new_cross_corr[:, shifts_ub[1]:shifts_lb[1]] = 0
-        else:
-            new_cross_corr[:, :shifts_lb[1]] = 0
-            new_cross_corr[:, shifts_ub[1]:] = 0
-    else:
-
-        new_cross_corr[max_shifts[0]:-max_shifts[0], :] = 0
-
-        new_cross_corr[:, max_shifts[1]:-max_shifts[1]] = 0
-
-    maxima = np.unravel_index(np.argmax(new_cross_corr),
-                              cross_correlation.shape)
-    midpoints = np.array([np.fix(old_div(axis_size, 2))
-                          for axis_size in shape])
-
-    shifts = np.array(maxima, dtype=np.float32)
-    shifts[shifts > midpoints] -= np.array(shape)[shifts > midpoints]
-
-    if upsample_factor == 1:
-
-        src_amp = old_div(np.sum(np.abs(src_freq) ** 2), src_freq.size)
-        target_amp = old_div(
-            np.sum(np.abs(target_freq) ** 2), target_freq.size)
-        CCmax = cross_correlation.max()
-    # If upsampling > 1, then refine estimate with matrix multiply DFT
-    else:
-        # Initial shift estimate in upsampled grid
-        shifts = old_div(np.round(shifts * upsample_factor), upsample_factor)
-        upsampled_region_size = np.ceil(upsample_factor * 1.5)
-        # Center of output array at dftshift + 1
-        dftshift = np.fix(old_div(upsampled_region_size, 2.0))
-        upsample_factor = np.array(upsample_factor, dtype=np.float32)
-        normalization = (src_freq.size * upsample_factor ** 2)
-        # Matrix multiply DFT around the current shift estimate
-        sample_region_offset = dftshift - shifts * upsample_factor
-
-        cross_correlation = _upsampled_dft_full(image_product.conj(),
-                                           upsampled_region_size,
-                                           upsample_factor,
-                                           sample_region_offset).conj()
-        cross_correlation /= normalization
-        # Locate maximum and map back to original pixel grid
-        maxima = np.array(np.unravel_index(
-            np.argmax(np.abs(cross_correlation)),
-            cross_correlation.shape),
-            dtype=np.float32)
-        maxima -= dftshift
-        shifts = shifts + old_div(maxima, upsample_factor)
-        CCmax = cross_correlation.max()
-        src_amp = _upsampled_dft_no_size(src_freq * src_freq.conj(), upsample_factor)[0, 0]
-        src_amp /= normalization
-        target_amp = _upsampled_dft_no_size(target_freq * target_freq.conj(), upsample_factor)[0, 0]
-        target_amp /= normalization
-
-    # If its only one row or column the shift along that dimension has no
-    # effect. We set to zero.
-    for dim in range(src_freq.ndim):
-        if shape[dim] == 1:
-            shifts[dim] = 0
-
-    return shifts, src_freq, _compute_phasediff(CCmax)
+vmap_register_translation = vmap(register_translation_jax_full, in_axes=(0, 0, None, None, None, None))
 
 #########
 ### apply_shifts function + helper code
@@ -1573,6 +1336,7 @@ def update_src_freq_jax(src_freq):
     out_norm = jnp.divide(out, jnp.size(out))
     return jnp.complex128(out_norm)
 
+
 @partial(jit)
 def update_src_freq_identity(src_freq):
     return jnp.complex128(src_freq)
@@ -1580,7 +1344,6 @@ def update_src_freq_identity(src_freq):
 def update_src_freq_flag(src_freq, flag):
     output = jnp.complex128(jax.lax.cond(~flag, update_src_freq_jax, update_src_freq_identity, src_freq))
     return output
-
 
 def first_value(a, b):
     return a
@@ -1590,16 +1353,14 @@ def second_value(a, b):
 
 # @partial(jit)
 def ceil_max(a, b):
-    interm = jax.lax.cond(a<b, second_value, first_value, a,b)
+    interm = jax.lax.cond(a < b, second_value, first_value, a, b)
     return jnp.ceil(interm)
+
 
 # @partial(jit)
 def floor_min(a, b):
-    interm = jax.lax.cond(a>b, second_value, first_value, a,b)
+    interm = jax.lax.cond(a > b, second_value, first_value, a, b)
     return jnp.fix(interm)
-
-def apply_shifts_dft(src_freq, shifts, diffphase, is_freq=True):
-    return np.array(apply_shifts_dft_fast_1(src_freq, shifts[0], shifts[1], diffphase, is_freq))
 
 # @partial(jit)
 def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
@@ -1647,34 +1408,26 @@ def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
         diffphase: comes from the register_translation output
     """
 
-
     src_freq = jnp.complex64(src_freq_in)
 
-
-
-
     nc, nr = src_freq.shape
-    val_1 = -int(nr/2)
-    val_2 = int(nr/2. + 0.5)
-    val_3 = -int(nc/2)
-    val_4 = int(nc/2. + 0.5)
+    val_1 = -int(nr / 2)
+    val_2 = int(nr / 2. + 0.5)
+    val_3 = -int(nc / 2)
+    val_4 = int(nc / 2. + 0.5)
     Nr = jnp.fft.ifftshift(jnp.arange(val_1, val_2))
     Nc = jnp.fft.ifftshift(jnp.arange(val_3, val_4))
     Nr, Nc = jnp.meshgrid(Nr, Nc)
     Greg = jnp.multiply(src_freq, jnp.exp(1j * 2 * jnp.pi *
-                             (-shift_b * 1. * Nr / nr - shift_a * 1. * Nc / nc)))
+                                          (-shift_b * 1. * Nr / nr - shift_a * 1. * Nc / nc)))
 
     Greg = jnp.dot(Greg, jnp.exp(jnp.multiply(1j, diffphase)))
     new_img = jnp.real(jnp.fft.ifftn(Greg, norm="forward"))
-
-
 
     max_h = ceil_max(shift_a, 0.).astype(jnp.int32)
     max_w = ceil_max(shift_b, 0.).astype(jnp.int32)
     min_h = floor_min(shift_a, 0.).astype(jnp.int32)
     min_w = floor_min(shift_b, 0.).astype(jnp.int32)
-
-
 
     new_img_1 = fill_maxh(new_img, max_h)
     new_img_2 = jax.lax.cond(min_h < 0, fill_minh, return_identity_mins, *(new_img_1, min_h))
@@ -1684,40 +1437,36 @@ def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
     return new_img_4
 
 
-
-# @partial(jit)
 def fill_minw(img, k):
     x, y = img.shape
     key = y + k
 
     filter_mat = (jnp.arange(y) < key).astype(jnp.int32)
-    filter_mat = jnp.broadcast_to(filter_mat, (x,y))
+    filter_mat = jnp.broadcast_to(filter_mat, (x, y))
 
     img_filter = filter_mat * img
 
     addend = (jnp.arange(y) >= key).astype(jnp.int32)
-    addend = jnp.broadcast_to(addend, (x,y))
-    addend = addend * img[:, k-1, None]
+    addend = jnp.broadcast_to(addend, (x, y))
+    addend = addend * img[:, k - 1, None]
 
     return img_filter + addend
 
 
-# @partial(jit)
 def fill_maxw(img, k):
-    x,y = img.shape
+    x, y = img.shape
     filter_mat = (jnp.arange(y) >= k).astype(jnp.int32)
-    filter_mat = jnp.broadcast_to(filter_mat, (x,y))
+    filter_mat = jnp.broadcast_to(filter_mat, (x, y))
 
     img_filtered = filter_mat * img
 
     addend = (jnp.arange(y) < k).astype(jnp.int32)
-    addend = jnp.broadcast_to(addend, (x,y))
+    addend = jnp.broadcast_to(addend, (x, y))
     addend = addend * img[:, k, None]
 
     return img_filtered + addend
 
 
-# @partial(jit)
 def fill_maxh(img, k):
     x, y = img.shape
     filter_mat = jnp.reshape((jnp.arange(x) >= k), (-1, 1)).astype(jnp.int32)
@@ -1730,7 +1479,6 @@ def fill_maxh(img, k):
     return addend_binary + img_filtered
 
 
-# @partial(jit)
 def fill_minh(img, k):
     x, y = img.shape
     key = x + k
@@ -1740,110 +1488,38 @@ def fill_minh(img, k):
     filtered_img = img * filtered_mat
 
     addend = jnp.reshape((jnp.arange(x) >= key), (-1, 1)).astype(jnp.int32)
-    addend = jnp.broadcast_to(addend, (x,y))
-    addend_final = addend * img[key-1]
+    addend = jnp.broadcast_to(addend, (x, y))
+    addend_final = addend * img[key - 1]
 
     return filtered_img + addend_final
 
 
-# @partial(jit)
 def return_identity_mins(in_var, k):
     return in_var
 
-
-#%%
-def sliding_window(image, overlaps, strides):
-    """ efficiently and lazily slides a window across the image
-
-    Args: 
-        img:ndarray 2D
-            image that needs to be slices
-
-        windowSize: tuple
-            dimension of the patch
-
-        strides: tuple
-            stride in each dimension
-
-     Returns:
-         iterator containing five items
-              dim_1, dim_2 coordinates in the patch grid
-              x, y: bottom border of the patch in the original matrix
-
-              patch: the patch
-     """
-    windowSize = np.add(overlaps, strides)
-    range_1 = list(range(
-        0, image.shape[0] - windowSize[0], strides[0])) + [image.shape[0] - windowSize[0]]
-    range_2 = list(range(
-        0, image.shape[1] - windowSize[1], strides[1])) + [image.shape[1] - windowSize[1]]
-    for dim_1, x in enumerate(range_1):
-        for dim_2, y in enumerate(range_2):
-            # yield the current window
-            yield (dim_1, dim_2, x, y, image[x:x + windowSize[0], y:y + windowSize[1]])
-
-
-def create_weight_matrix_for_blending(img, overlaps, strides):
-    """ create a matrix that is used to normalize the intersection of the stiched patches
-
-    Args:
-        img: original image, ndarray
-
-        shapes, overlaps, strides:  tuples
-            shapes, overlaps and strides of the patches
-
-    Returns:
-        weight_mat: normalizing weight matrix
-    """
-    shapes = np.add(strides, overlaps)
-
-    max_grid_1, max_grid_2 = np.max(
-        np.array([it[:2] for it in sliding_window(img, overlaps, strides)]), 0)
-
-    for grid_1, grid_2, _, _, _ in sliding_window(img, overlaps, strides):
-
-        weight_mat = np.ones(shapes)
-
-        if grid_1 > 0:
-            weight_mat[:overlaps[0], :] = np.linspace(
-                0, 1, overlaps[0])[:, None]
-        if grid_1 < max_grid_1:
-            weight_mat[-overlaps[0]:,
-                       :] = np.linspace(1, 0, overlaps[0])[:, None]
-        if grid_2 > 0:
-            weight_mat[:, :overlaps[1]] = weight_mat[:, :overlaps[1]
-                                                     ] * np.linspace(0, 1, overlaps[1])[None, :]
-        if grid_2 < max_grid_2:
-            weight_mat[:, -overlaps[1]:] = weight_mat[:, -
-                                                      overlaps[1]:] * np.linspace(1, 0, overlaps[1])[None, :]
-
-        yield weight_mat
-
 # @partial(jit, static_argnums=(4,))
 def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_movie):
-
     upsample_factor_fft = 10
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
     template = jnp.add(template, add_to_movie).astype(jnp.float32)
-
 
     # compute rigid shifts
     rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
         img_filtered, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
 
-    #Second input doesn't matter here
+    # Second input doesn't matter here
     sfr_freq, _ = get_freq_comps_jax(img, img)
 
     new_img = apply_shifts_dft_fast_1(sfr_freq, -rigid_shts[0], -rigid_shts[1], diffphase)
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
+
 tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, (None, None), None)))
 
 
 # @partial(jit, static_argnums=(3,))
 def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
-
     upsample_factor_fft = 10
 
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
@@ -1857,25 +1533,28 @@ def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
 
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
+
 tile_and_correct_rigid_vmap = jit(vmap(tile_and_correct_rigid, in_axes=(0, None, None, None)))
 
 
-@partial(jit, static_argnums=(1,2,3,4))
+@partial(jit, static_argnums=(1, 2, 3, 4))
 def get_indices(img, overlaps_0, overlaps_1, strides_0, strides_1):
     first_dim = jnp.arange(0, img.shape[0] - overlaps_0 - strides_0, strides_0)
-    first_dim = jnp.append(first_dim,img.shape[0] - overlaps_0 - strides_0 )
+    first_dim = jnp.append(first_dim, img.shape[0] - overlaps_0 - strides_0)
 
     second_dim = jnp.arange(0, img.shape[1] - overlaps_1 - strides_1, strides_1)
     second_dim = jnp.append(second_dim, img.shape[1] - overlaps_1 - strides_1)
     return first_dim, second_dim
 
-@partial(jit, static_argnums=(3,4))
+
+@partial(jit, static_argnums=(3, 4))
 def crop_image(img, x, y, length_1, length_2):
-    out = jax.lax.dynamic_slice(img, (x,y), (length_1, length_2))
+    out = jax.lax.dynamic_slice(img, (x, y), (length_1, length_2))
     return out
 
-# crop_image_vmap = jit(vmap(crop_image, in_axes=(None, 0, 0, None, None)), static_argnums=(3,4))
+
 crop_image_vmap = vmap(crop_image, in_axes=(None, 0, 0, None, None))
+
 
 # @partial(jit, static_argnums=(1,2,3,4))
 def get_patches_jax(img, overlaps_0, overlaps_1, strides_0, strides_1):
@@ -1883,7 +1562,8 @@ def get_patches_jax(img, overlaps_0, overlaps_1, strides_0, strides_1):
     product = jnp.array(jnp.meshgrid(first_dim, second_dim)).T.reshape((-1, 2))
     first_dim_new = product[:, 0]
     second_dim_new = product[:, 1]
-    return crop_image_vmap(img, first_dim_new, second_dim_new, overlaps_0+strides_0, overlaps_1+strides_1)
+    return crop_image_vmap(img, first_dim_new, second_dim_new, overlaps_0 + strides_0, overlaps_1 + strides_1)
+
 
 # @partial(jit, static_argnums=(1,2,3,4))
 def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
@@ -1893,9 +1573,11 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
     product = jnp.array(jnp.meshgrid(first_dim_updated, second_dim_updated)).T.reshape((-1, 2))
     return product
 
+
 # @partial(jit, static_argnums=(3,4,5,6,8))
-def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
-                     max_deviation_rigid, add_to_movie):
+def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
+                                upsample_factor_fft, \
+                                max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
@@ -1946,7 +1628,6 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     img = jnp.array(img).astype(jnp.float32)
     template = jnp.array(template).astype(jnp.float32)
 
-
     img_filtered = img_filtered + add_to_movie
     template = template + add_to_movie
 
@@ -1966,42 +1647,29 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     dim_grid = [comp_a, comp_b]
     num_tiles = comp_a * comp_b
 
-
-
     lb_shifts = jnp.ceil(jnp.subtract(
         rigid_shts, max_deviation_rigid)).astype(jnp.int16)
     ub_shifts = jnp.floor(
         jnp.add(rigid_shts, max_deviation_rigid)).astype(jnp.int16)
 
-
     # extract shifts for each patch
     src_image_inputs = jnp.array(imgs)
     target_image_inputs = jnp.array(templates)
-    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts, ub_shifts, max_shifts)
-
-
-
+    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts,
+                                             ub_shifts, max_shifts)
 
     shift_img_y = jnp.reshape(jnp.array(shfts_et_all[0])[:, 1], dim_grid)
     shift_img_x = jnp.reshape(jnp.array(shfts_et_all[0])[:, 0], dim_grid)
     diffs_phase_grid = jnp.reshape(jnp.array(shfts_et_all[2]), dim_grid)
 
-
-
     dims = img.shape
-
-
 
     x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
         jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
 
-
-
     remap_input_2 = jax.image.resize(shift_img_y.astype(jnp.float32), dims, method="cubic") + x_grid
     remap_input_1 = jax.image.resize(shift_img_x.astype(jnp.float32), dims, method="cubic") + y_grid
-    m_reg = jax.scipy.ndimage.map_coordinates(img, [remap_input_1, remap_input_2],order=1, mode='nearest')
-
-
+    m_reg = jax.scipy.ndimage.map_coordinates(img, [remap_input_1, remap_input_2], order=1, mode='nearest')
 
     shift_img_x_r = shift_img_x.reshape(num_tiles)
     shift_img_x_y = shift_img_y.reshape(num_tiles)
@@ -2009,13 +1677,13 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     return m_reg - add_to_movie, total_shifts
 
 
-tile_and_correct_pwrigid_1p_vmap = jit(vmap(tile_and_correct_pwrigid_1p, in_axes = (0, 0, None, None, None, None, None, None, None, None, None)), \
-                           static_argnums=(3,4,5,6,8))
+tile_and_correct_pwrigid_1p_vmap = jit(
+    vmap(tile_and_correct_pwrigid_1p, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
+    static_argnums=(3, 4, 5, 6, 8))
 
 
-
-@partial(jit, static_argnums=(2,3,4,5,7))
-def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
+@partial(jit, static_argnums=(2, 3, 4, 5, 7))
+def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
                      max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
@@ -2086,31 +1754,22 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
     dim_grid = [comp_a, comp_b]
     num_tiles = comp_a * comp_b
 
-
-
     lb_shifts = jnp.ceil(jnp.subtract(
         rigid_shts, max_deviation_rigid)).astype(jnp.int16)
     ub_shifts = jnp.floor(
         jnp.add(rigid_shts, max_deviation_rigid)).astype(jnp.int16)
 
-
     # extract shifts for each patch
     src_image_inputs = jnp.array(imgs)
     target_image_inputs = jnp.array(templates)
-    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts, ub_shifts, max_shifts)
-
-
-
+    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts,
+                                             ub_shifts, max_shifts)
 
     shift_img_y = jnp.reshape(jnp.array(shfts_et_all[0])[:, 1], dim_grid)
     shift_img_x = jnp.reshape(jnp.array(shfts_et_all[0])[:, 0], dim_grid)
     diffs_phase_grid = jnp.reshape(jnp.array(shfts_et_all[2]), dim_grid)
 
-
-
     dims = img.shape
-
-
 
     x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
         jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
@@ -2136,8 +1795,8 @@ def opencv_interpolation(img, dims, shift_img_x, shift_img_y, x_grid, y_grid, ad
 
 # Note that jax does not have higher-order spline implemented, eventually switch to that if it's actually the case that it leads to better outcomes
 # @partial(jit, static_argnums=(2,3,4,5,7))
-def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft,\
-                     max_deviation_rigid, add_to_movie):
+def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
+                           max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
@@ -2202,41 +1861,29 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     dim_grid = [comp_a, comp_b]
     num_tiles = comp_a * comp_b
 
-
-
     lb_shifts = jnp.ceil(jnp.subtract(
         rigid_shts, max_deviation_rigid)).astype(jnp.int16)
     ub_shifts = jnp.floor(
         jnp.add(rigid_shts, max_deviation_rigid)).astype(jnp.int16)
 
-
     # extract shifts for each patch
     src_image_inputs = jnp.array(imgs)
     target_image_inputs = jnp.array(templates)
-    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts, ub_shifts, max_shifts)
-
-
+    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts,
+                                             ub_shifts, max_shifts)
 
     shift_img_x = jnp.reshape(jnp.array(shfts_et_all[0])[:, 0], dim_grid)
     shift_img_y = jnp.reshape(jnp.array(shfts_et_all[0])[:, 1], dim_grid)
     diffs_phase_grid = jnp.reshape(jnp.array(shfts_et_all[2]), dim_grid)
 
-
-
     dims = img.shape
-
-
 
     x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
         jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
 
-
-
     remap_input_2 = jax.image.resize(shift_img_y.astype(jnp.float32), dims, method="cubic") + x_grid
     remap_input_1 = jax.image.resize(shift_img_x.astype(jnp.float32), dims, method="cubic") + y_grid
-    m_reg = jax.scipy.ndimage.map_coordinates(img, [remap_input_1, remap_input_2],order=1, mode='nearest')
-
-
+    m_reg = jax.scipy.ndimage.map_coordinates(img, [remap_input_1, remap_input_2], order=1, mode='nearest')
 
     shift_img_x_r = shift_img_x.reshape(num_tiles)
     shift_img_x_y = shift_img_y.reshape(num_tiles)
@@ -2244,14 +1891,15 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     return m_reg - add_to_movie, total_shifts
 
 
-tile_and_correct_pwrigid_vmap = jit(vmap(tile_and_correct_ideal, in_axes = (0, None, None, None, None, None, None, None, None, None)), \
-                           static_argnums=(2,3,4,5,7))
+tile_and_correct_pwrigid_vmap = jit(
+    vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
+    static_argnums=(2, 3, 4, 5, 7))
 
 
 def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
                                template=None, save_movie_rigid=False, add_to_movie=None,
                                nonneg_movie=False, subidx=slice(None, None, 1), var_name_hdf5='mov',
-                               indices=(slice(None), slice(None)), filter_kernel = None, bigtiff=False):
+                               indices=(slice(None), slice(None)), filter_kernel=None, bigtiff=False):
     """
     Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
 
@@ -2325,7 +1973,7 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
         if not m.flags['WRITEABLE']:
             m = m.copy()
         template = bin_median(
-                m.motion_correct(max_shifts[1], max_shifts[0], template=None)[0])
+            m.motion_correct(max_shifts[1], max_shifts[0], template=None)[0])
 
     new_templ = template
     if add_to_movie is None:
@@ -2339,29 +1987,31 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
 
     save_movie = save_movie_rigid
     fname_tot_rig = None
-    res_rig:List = []
+    res_rig: List = []
     for iter_ in range(num_iter):
         logging.debug(iter_)
         old_templ = new_templ.copy()
         if iter_ == num_iter - 1:
             save_movie = save_movie_rigid
         if isinstance(fname, tuple):
-            base_name=os.path.split(fname[0])[-1][:-4] + '_rig_'
+            base_name = os.path.split(fname[0])[-1][:-4] + '_rig_'
         else:
-            base_name=os.path.split(fname)[-1][:-4] + '_rig_'
+            base_name = os.path.split(fname)[-1][:-4] + '_rig_'
 
         if iter_ == num_iter - 1 and save_movie_rigid:
             save_flag = True
         else:
             save_flag = False
 
-        if iter_ == num_iter - 1 and save_flag: #Idea: If we are saving out the full movie, sampling to just get the template is insufficient
+        if iter_ == num_iter - 1 and save_flag:  # Idea: If we are saving out the full movie, sampling to just get the template is insufficient
             num_splits_to_process = None
         logging.info("We are about to enter motion correction piecewise")
         fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
-                                                             add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts, max_deviation_rigid=0,
-                                                             save_movie=save_flag, base_name=base_name, subidx = subidx,
-                                                             num_splits=num_splits_to_process, nonneg_movie=nonneg_movie,
+                                                             add_to_movie=add_to_movie, template=old_templ,
+                                                             max_shifts=max_shifts, max_deviation_rigid=0,
+                                                             save_movie=save_flag, base_name=base_name, subidx=subidx,
+                                                             num_splits=num_splits_to_process,
+                                                             nonneg_movie=nonneg_movie,
                                                              var_name_hdf5=var_name_hdf5, indices=indices,
                                                              filter_kernel=filter_kernel, bigtiff=bigtiff)
 
@@ -2372,13 +2022,14 @@ def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_proce
 
     total_template = new_templ
     templates = []
-    shifts:List = []
+    shifts: List = []
     for rr in res_rig:
         shift_info, idxs, tmpl = rr
         templates.append(tmpl)
         shifts += [sh[0] for sh in shift_info[:len(idxs)]]
 
     return fname_tot_rig, total_template, templates, shifts
+
 
 def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_movie, newoverlaps=None, newstrides=None,
                                  upsample_factor_grid=4, max_deviation_rigid=3,
@@ -2467,9 +2118,9 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
                     logging.debug(f'saving mmap of {fname}')
 
         if isinstance(fname, tuple):
-            base_name=os.path.split(fname[0])[-1][:-4] + '_els_'
+            base_name = os.path.split(fname[0])[-1][:-4] + '_els_'
         else:
-            base_name=os.path.split(fname)[-1][:-4] + '_els_'
+            base_name = os.path.split(fname)[-1][:-4] + '_els_'
 
         if iter_ == num_iter - 1 and save_movie:
             save_flag = True
@@ -2479,13 +2130,16 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
         if iter_ == num_iter - 1 and save_flag:
             num_splits_to_process = None
         fname_tot_els, res_el = motion_correction_piecewise(fname, splits, strides, overlaps,
-                                                            add_to_movie=add_to_movie, template=old_templ, max_shifts=max_shifts,
+                                                            add_to_movie=add_to_movie, template=old_templ,
+                                                            max_shifts=max_shifts,
                                                             max_deviation_rigid=max_deviation_rigid,
                                                             newoverlaps=newoverlaps, newstrides=newstrides,
-                                                            upsample_factor_grid=upsample_factor_grid, order='F', save_movie=save_flag,
+                                                            upsample_factor_grid=upsample_factor_grid, order='F',
+                                                            save_movie=save_flag,
                                                             base_name=base_name, num_splits=num_splits_to_process,
                                                             nonneg_movie=nonneg_movie, var_name_hdf5=var_name_hdf5,
-                                                            indices=indices, filter_kernel=filter_kernel, bigtiff=bigtiff)
+                                                            indices=indices, filter_kernel=filter_kernel,
+                                                            bigtiff=bigtiff)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
         if filter_kernel is not None:
@@ -2504,28 +2158,28 @@ def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_mo
             total_shift = shift_info
             x_shifts.append(np.array([sh[0] for sh in total_shift]))
             y_shifts.append(np.array([sh[1] for sh in total_shift]))
-            coord_shifts.append(None) #TODO: Temporarily remove coord_shifts
+            coord_shifts.append(None)
     return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
 
 
-def generate_template_chunk(arr, batch_size = 250000):
+def generate_template_chunk(arr, batch_size=250000):
     dim_1_step = int(math.sqrt(batch_size))
     dim_2_step = int(math.sqrt(batch_size))
 
-    dim1_net_iters = math.ceil(arr.shape[1]/dim_1_step)
-    dim2_net_iters = math.ceil(arr.shape[2]/dim_2_step)
+    dim1_net_iters = math.ceil(arr.shape[1] / dim_1_step)
+    dim2_net_iters = math.ceil(arr.shape[2] / dim_2_step)
 
     total_output = np.zeros((arr.shape[1], arr.shape[2]))
     for k in range(dim1_net_iters):
         for j in range(dim2_net_iters):
-            start_dim1 = k*dim_1_step
-            end_dim1 = min(start_dim1 +dim_1_step, arr.shape[1])
-            start_dim2 =k*dim_2_step
+            start_dim1 = k * dim_1_step
+            end_dim1 = min(start_dim1 + dim_1_step, arr.shape[1])
+            start_dim2 = k * dim_2_step
             end_dim2 = min(start_dim2 + dim_2_step, arr.shape[2])
-            total_output[start_dim1:end_dim1, start_dim2:end_dim2] = nan_processing(arr[:, start_dim1:end_dim1, start_dim2:end_dim2])
+            total_output[start_dim1:end_dim1, start_dim2:end_dim2] = nan_processing(
+                arr[:, start_dim1:end_dim1, start_dim2:end_dim2])
 
     return total_output
-
 
 
 @partial(jit)
@@ -2535,6 +2189,7 @@ def nan_processing(arr):
     r = jnp.nan_to_num(p, q)
     return r
 
+
 class tile_and_correct_dataset():
     def __init__(self, param_list):
         self.param_list = param_list
@@ -2543,63 +2198,58 @@ class tile_and_correct_dataset():
         return len(self.param_list)
 
     def __getitem__(self, index):
-        img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
-        add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel= self.param_list[index]
+        img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel = self.param_list[index]
 
         imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
         imgs = np.array(imgs[(slice(None),) + indices])
         mc = np.zeros(imgs.shape, dtype=np.float32)
 
-        return imgs, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
-        add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel
-
+        return imgs, mc, img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel
 
 
 def regular_collate(batch):
-    # print("the type of batch is {}".format(type(batch)))
-    # print("the length of this batch is {}".format(len(batch)))
     return batch[0]
 
+
 def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
-    """Does motion correction on specified image frames
-
-    Returns:
-    shift_info:
-    idxs:
-    mean_img: mean over all frames of corrected image (to get individ frames, use out_fname to write them to disk)
-
-    Notes:
-    Also writes corrected frames to the mmap file specified by out_fname (if not None)
-
     """
-    # todo todocument
+    Contains logic to load multiple chunks of data, register it to template, and return estimated shifts + local template info
 
+    Inputs:
+        param_list: tuple. Large tuple of parameters for performing registration on each chunk of data
+        split_constant: int. Number of frames we register at a time (to avoid GPU OOM errors)
+        bigtiff: Boolean. Indicates whether we save with bigtiff options or not
+    Returns:
+        results_list. List of tuples, one for each chunk of data which was processed. Each tuple contains:
+            1. shift_into. list of lists. Each nested list contains a np.ndarray of shape (2,) describing the xy shifts applied to each frame of the data
+            2. idxs. np.ndarray. Shape (T,) where T is the number of frames registered in this chunk of data
+            3. new_temp. np.ndarray. Shape (dim1, dim2) where dim1 and dim2 are height and length of FOV.
 
-    try:
-        cv2.setNumThreads(0)
-    except:
-        pass  # 'Open CV is naturally single threaded'
-
+    Side Effect: If specified, writes corrected frames to a tiff memmap file (name given by out_fname)
+    """
     num_workers = 0
-    prefetch_factor = 0
     tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
-    loader_obj= torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
-                                             shuffle=False, num_workers=num_workers, collate_fn=regular_collate, timeout=0)
+    loader_obj = torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
+                                             shuffle=False, num_workers=num_workers, collate_fn=regular_collate,
+                                             timeout=0)
 
     results_list = []
     start_pt_save = 0
     memmap_placeholder = None
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
-        num_iters = math.ceil(data[0].shape[0]/split_constant)
-        imgs_net, mc,img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts,\
-        add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-        nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel = data
+        num_iters = math.ceil(data[0].shape[0] / split_constant)
+        imgs_net, mc, img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel = data
         if out_fname is not None:
             inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
             if memmap_placeholder is None:
-                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype, bigtiff=bigtiff)
+                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype,
+                                                     bigtiff=bigtiff)
         for j in range(num_iters):
 
             start_pt = split_constant * j
@@ -2612,14 +2262,13 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
             extension = extension.lower()
             shift_info = []
 
-            load_time = time.time()
-            upsample_factor_fft = 10 #Was originally hardcoded...
+            upsample_factor_fft = 10  # Was originally hardcoded...
 
             if not imgs[0].shape == template.shape:
                 template = template[indices]
             if max_deviation_rigid == 0:
                 if filter_kernel is None:
-                    outs= tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
+                    outs = tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
                     outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
@@ -2627,20 +2276,22 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
                 shift_info.extend([[k] for k in np.array(outs[1])])
             else:
                 if filter_kernel is None:
-                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0], overlaps[1], \
-                                                                                       max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie)
+                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0],
+                                                         overlaps[1], \
+                                                         max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                         add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1], overlaps[0], overlaps[1], \
-                                                                                       max_shifts,upsample_factor_fft, max_deviation_rigid, add_to_movie)
-
+                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1],
+                                                            overlaps[0], overlaps[1], \
+                                                            max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                            add_to_movie)
 
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
 
-
         if out_fname is not None:
-            memmap_placeholder[start_pt_save:start_pt_save+mc.shape[0], :, :] = mc
+            memmap_placeholder[start_pt_save:start_pt_save + mc.shape[0], :, :] = mc
             start_pt_save += mc.shape[0]
             memmap_placeholder.flush()
         new_temp = generate_template_chunk(mc)
@@ -2649,6 +2300,7 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
 
     return results_list
 
+
 def calculate_splits(T, splits):
     '''
     Heuristic for calculating splits
@@ -2656,24 +2308,26 @@ def calculate_splits(T, splits):
     out = np.array_split(list(range(T)), splits)
     return out
 
+
 def load_split_heuristic(d1, d2, T):
     '''
     Heuristic for determining how many frames to register at a time (to avoid GPU OOM)
     '''
 
-    if d1*d2 > 512*512:
+    if d1 * d2 > 512 * 512:
         new_T = 20
-    elif d1*d2 > 100000:
+    elif d1 * d2 > 100000:
         new_T = 100
     else:
         new_T = 2000
 
     return min(T, new_T)
 
+
 def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
                                 max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
                                 upsample_factor_grid=4, order='F', save_movie=True,
-                                base_name=None, subidx = None, num_splits=None, nonneg_movie=False, var_name_hdf5='mov',
+                                base_name=None, subidx=None, num_splits=None, nonneg_movie=False, var_name_hdf5='mov',
                                 indices=(slice(None), slice(None)), filter_kernel=None, bigtiff=False):
     """
     TODO DOCUMENT
@@ -2714,17 +2368,16 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
     if save_movie:
         if base_name is None:
             base_name = os.path.split(fname)[1][:-4]
-        fname_tot:Optional[str] = tiff_frames_filename(base_name, dims, T, order)
+        fname_tot: Optional[str] = tiff_frames_filename(base_name, dims, T, order)
         if isinstance(fname, tuple):
             fname_tot = os.path.join(os.path.split(fname[0])[0], fname_tot)
         else:
             fname_tot = os.path.join(os.path.split(fname)[0], fname_tot)
 
-
         if os.path.exists(fname_tot):
             os.remove(fname_tot)
-            print(f"File '{fname_tot}' already exists, likely from a different run of motion correction. It will be overwritten.")
-
+            print(
+                f"File '{fname_tot}' already exists, likely from a different run of motion correction. It will be overwritten.")
 
         logging.info('Saving file as {}'.format(fname_tot))
     else:
@@ -2735,11 +2388,8 @@ def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0
         logging.debug('Processing: frames: {}'.format(idx))
         pars.append([fname, fname_tot, np.array(idx), shape_mov, template, strides, overlaps, max_shifts, np.array(
             add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-            newoverlaps, newstrides, nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel])
+                     newoverlaps, newstrides, nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel])
 
-    import time
-    start_time = time.time()
     split_constant = load_split_heuristic(dims[0], dims[1], T)
     res = tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
-    print("this motion correction step took {}".format(time.time() - start_time))
     return fname_tot, res
