@@ -2,27 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import logging
-from builtins import map
 from builtins import range
 from builtins import str
-from builtins import zip
 
 import cv2
-import h5py
 import jax
 import torch
 from past.utils import old_div
 
 logging.basicConfig(level=logging.ERROR)
 import numpy as np
-import os
-import pylab as pl
 import tifffile
-from typing import List, Optional, Tuple
+from typing import List
 from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
-import jnormcorre.utils.movies as movies
-from jnormcorre.utils.movies import load, load_iter
-import pathlib
 from tqdm import tqdm
 import math
 import jax.numpy as jnp
@@ -34,32 +26,43 @@ import random
 ### General object for motion correction
 ## Use case: you have a good template (maybe you run registration on 10K frames, or you used a clever method to find a great template from data. Now you want to register lots of frames to this template. This object is a transparent way to use that functionality from this repo
 class frame_corrector():
-    def __init__(self, corrector, batching=100):
+    def __init__(self, template, pw_rigid, max_shifts, strides, overlaps, max_deviation_rigid, min_mov = None, batching=100):
         """
-        Use Case: You have a good template
-        Inputs: corrector: jnormcorre motion correction object (jnormcorre.motion_correction). This object stores the
-        necessary info to do motion correction (templates, shifts, overlaps, etc.) batching: number of frames to
-        register at a time. This helps exploit the JIT acceleration of motion correction (via caching) and more
-        importantly prevents the GPU from being overloaded with frames. register_flag: If this is false, this object
-        does not register data
-        """
+        Use Case: You have a good template, and you want to use the functionality from this codebase to align
+        (potentially unseen) frames to this data.
 
-        if corrector.pw_rigid:
+        Inputs:
+            template: np.ndarray. Shape (d1, d2) where d1 and d2 are the FOV dimensions
+            pw_rigid: Boolean. True if we want to do piecewise rigid registration
+            max_shifts: Tuple of two integers. Maximum rigid shift allowed when doing alignment
+            strides: Tuple of two integers.
+            Overlaps: Tuple of two integers.
+                As below, strides[0] + overlaps[0] and strides[1] + overlaps[1] are the patch size dimensions.
+            max_deviation_rigid. Integer. The maximum deviation between the rigid registration results and the template when doing
+                piecewise rigid registration.
+        """
+        self.template = template
+
+
+        if pw_rigid:
             self.corr_method = "pwrigid"
         else:
             self.corr_method = "rigid"
 
-        self.max_shifts = corrector.max_shifts
+        self.max_shifts = max_shifts
 
-        self.upsample_factor_fft = 10  ##NOTE: This is a hardcoded value in the original normcorre method, eventually actually treat it like a constant
-        self.add_to_movie = -corrector.min_mov
-        self.strides = corrector.strides
-        self.overlaps = corrector.overlaps
-        self.max_deviation_rigid = corrector.max_deviation_rigid
+        self.upsample_factor_fft = 10  ##NOTE: Hardcoded Value in original method
+        if min_mov is not None:
+            self.add_to_movie = -min_mov
+        else:
+            self.add_to_movie = 0
+
+        self.strides = strides
+        self.overlaps = overlaps
+        self.max_deviation_rigid = max_deviation_rigid
         self.batching = batching
 
         if self.corr_method == "pwrigid":
-            self.template = corrector.total_template_els
             self.registration_method = jit(
                 vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)),
                 static_argnums=(2, 3, 4, 5, 7))
@@ -73,8 +76,6 @@ class frame_corrector():
             self.jitted_method = simplified_registration_func
 
         elif self.corr_method == "rigid":
-            self.template = corrector.total_template_rig
-
             self.registration_method = vmap(tile_and_correct_rigid, in_axes=(0, None, None, None))
 
             def simplified_registration_func(frames):
@@ -85,14 +86,13 @@ class frame_corrector():
             raise ValueError("Invalid method provided. Must either be pwrigid or rigid")
 
     def register_frames(self, frames):
-        '''
+        """
         Inputs: 
             frames: np.ndarray, dimensions (T, d1, d2), where T is the number of frames and d1, d2 are the FOV dimensions
         Outputs: 
             corrected_frames: jnp.array. Dimensions (T, d1, d2). The registered output from the input (frames)
         
-        TODO: Add logic to get 
-        '''
+        """
         return self.jitted_method(frames)
 
 
@@ -119,156 +119,6 @@ def verify_strides_and_overlaps(dim, stride, overlap):
         raise ValueError(
             "The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(
                 stride, overlap, dim))
-
-
-def get_file_size(file_name, var_name_hdf5='mov'):
-    """ Computes the dimensions of a file or a list of files without loading
-    it/them in memory. An exception is thrown if the files have FOVs with
-    different sizes
-        Args:
-            file_name: str/filePath or various list types
-                locations of file(s)
-
-            var_name_hdf5: 'str'
-                if loading from hdf5 name of the dataset to load
-
-        Returns:
-            dims: tuple
-                dimensions of FOV
-
-            T: int or tuple of int
-                number of timesteps in each file
-    """
-    if isinstance(file_name, pathlib.Path):
-        # We want to support these as input, but str has a broader set of operations that we'd like to use, so let's just convert.
-        # (specifically, filePath types don't support subscripting)
-        file_name = str(file_name)
-    if isinstance(file_name, str):
-        if os.path.exists(file_name):
-            _, extension = os.path.splitext(file_name)[:2]
-            extension = extension.lower()
-            if extension == '.mat':
-                byte_stream, file_opened = scipy.io.matlab.mio._open_file(file_name, appendmat=False)
-                mjv, mnv = scipy.io.matlab.mio.get_matfile_version(byte_stream)
-                if mjv == 2:
-                    extension = '.h5'
-            if extension in ['.tif', '.tiff', '.btf']:
-                tffl = tifffile.TiffFile(file_name)
-                siz = tffl.series[0].shape
-                T, dims = siz[0], siz[1:]
-            elif extension in ('.avi', '.mkv'):
-                cap = cv2.VideoCapture(file_name)
-                dims = [0, 0]
-                try:
-                    T = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    dims[1] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    dims[0] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                except():
-                    print('Roll back to opencv 2')
-                    T = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT))
-                    dims[1] = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH))
-                    dims[0] = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT))
-            elif extension == '.mmap':
-                filename = os.path.split(file_name)[-1]
-                Yr, dims, T = load_memmap(os.path.join(
-                    os.path.split(file_name)[0], filename))
-            elif extension in ('.h5', '.hdf5', '.nwb'):
-                # FIXME this doesn't match the logic in movies.py:load()
-                # Consider pulling a lot of the "data source" code out into one place
-                with h5py.File(file_name, "r") as f:
-                    kk = list(f.keys())
-                    if len(kk) == 1 and var_name_hdf5 not in f:
-                        siz = f[kk[0]].shape
-                    elif var_name_hdf5 in f:
-                        if extension == '.nwb':
-                            siz = f[var_name_hdf5]['data'].shape
-                        else:
-                            siz = f[var_name_hdf5].shape
-                    elif var_name_hdf5 in f['acquisition']:
-                        siz = f['acquisition'][var_name_hdf5]['data'].shape
-                    else:
-                        logging.error('The file does not contain a variable' +
-                                      'named {0}'.format(var_name_hdf5))
-                        raise Exception('Variable not found. Use one of the above')
-                T, dims = siz[0], siz[1:]
-            elif extension in ('.n5', '.zarr'):
-                try:
-                    import z5py
-                except:
-                    raise Exception("z5py not available; if you need this use the conda-based setup")
-
-                with z5py.File(file_name, "r") as f:
-                    kk = list(f.keys())
-                    if len(kk) == 1:
-                        siz = f[kk[0]].shape
-                    elif var_name_hdf5 in f:
-                        if extension == '.nwb':
-                            siz = f[var_name_hdf5]['data'].shape
-                        else:
-                            siz = f[var_name_hdf5].shape
-                    elif var_name_hdf5 in f['acquisition']:
-                        siz = f['acquisition'][var_name_hdf5]['data'].shape
-                    else:
-                        logging.error('The file does not contain a variable' +
-                                      'named {0}'.format(var_name_hdf5))
-                        raise Exception('Variable not found. Use one of the above')
-                T, dims = siz[0], siz[1:]
-            elif extension in ('.sbx'):
-                raise ValueError("sbx file type no longer supported")
-            else:
-                raise Exception('Unknown file type')
-            dims = tuple(dims)
-        else:
-            raise Exception('File not found!')
-    elif isinstance(file_name, tuple):
-        dims = load(file_name[0], var_name_hdf5=var_name_hdf5).shape
-        T = len(file_name)
-
-    elif isinstance(file_name, list):
-        if len(file_name) == 1:
-            dims, T = get_file_size(file_name[0], var_name_hdf5=var_name_hdf5)
-        else:
-            dims, T = zip(*[get_file_size(fn, var_name_hdf5=var_name_hdf5)
-                            for fn in file_name])
-            if len(set(dims)) > 1:
-                raise Exception('Files have FOVs with different sizes')
-            else:
-                dims = dims[0]
-    else:
-        raise Exception('Unknown input type')
-    return dims, T
-
-
-def memmap_frames_filename(basename: str, dims: Tuple, frames: int, order: str = 'F') -> str:
-    # Some functions calling this have the first part of *their* dims Tuple be the number of frames.
-    # They *must* pass a slice to this so dims is only X, Y, and optionally Z. Frames is passed separately.
-    dimfield_0 = dims[0]
-    dimfield_1 = dims[1]
-    if len(dims) == 3:
-        dimfield_2 = dims[2]
-    else:
-        dimfield_2 = 1
-    return f"{basename}_d1_{dimfield_0}_d2_{dimfield_1}_d3_{dimfield_2}_order_{order}_frames_{frames}_.mmap"
-
-
-def tiff_frames_filename(basename: str, dims: Tuple, frames: int, order: str = 'F') -> str:
-    # Some functions calling this have the first part of *their* dims Tuple be the number of frames.
-    # They *must* pass a slice to this so dims is only X, Y, and optionally Z. Frames is passed separately.
-    dimfield_0 = dims[0]
-    dimfield_1 = dims[1]
-    if len(dims) == 3:
-        dimfield_2 = dims[2]
-    else:
-        dimfield_2 = 1
-    return f"{basename}_d1_{dimfield_0}_d2_{dimfield_1}_d3_{dimfield_2}_order_{order}_frames_{frames}_.tiff"
-
-
-def prepare_shape(mytuple: Tuple) -> Tuple:
-    """ This promotes the elements inside a shape into np.uint64. It is intended to prevent overflows
-        with some numpy operations that are sensitive to it, e.g. np.memmap """
-    if not isinstance(mytuple, tuple):
-        raise Exception("Internal error: prepare_shape() passed a non-tuple")
-    return tuple(map(lambda x: np.uint64(x), mytuple))
 
 
 ####### END OF PLACE IN FUNCTIONS #######
@@ -414,7 +264,13 @@ class MotionCorrect(object):
         self.border_to_0 = b0.astype(int)
         self.target_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
 
-        frame_correction_obj = frame_corrector(self)
+        if self.pw_rigid:
+            template = self.total_template_els
+        else:
+            template = self.total_template_rig
+        frame_correction_obj = frame_corrector(template, self.pw_rigid, self.max_shifts,
+                                                                           self.strides, self.overlaps,
+                                                                           self.max_deviation_rigid, min_mov=self.min_mov)
         return frame_correction_obj, self.target_file
 
     def motion_correct_rigid(self, template=None, save_movie=False) -> None:

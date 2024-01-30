@@ -6,9 +6,12 @@ import pytest
 import tifffile
 import h5py
 
+import jnormcorre.motion_correction
 from jnormcorre.simulation import SimData
 from jnormcorre.motion_correction import MotionCorrect
 from jnormcorre.utils import registrationarrays
+
+
 class Test_Simulation:
 
     @pytest.mark.parametrize("frames", [10, 50, 100])
@@ -16,19 +19,19 @@ class Test_Simulation:
     @pytest.mark.parametrize("Y", [30, 60, 90, 120])
     def test_init(self, frames, X, Y):
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
-                           blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
-                           background_noise=1, shot_noise=0.2)
+                      blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
 
     @pytest.mark.parametrize("frames", [10, 50, 100])
     @pytest.mark.parametrize("X", [30, 60, 90, 120])
     @pytest.mark.parametrize("Y", [30, 60, 90, 120])
     def test_run(self, frames, X, Y):
-
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
-                           blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
-                           background_noise=1, shot_noise=0.2)
+                      blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
 
         _, _ = sim.simulate()
+
 
 class Test_mc:
 
@@ -59,8 +62,8 @@ class Test_mc:
 
         self.frames, self.X, self.Y = (25, 95, 85)
         sim = SimData(frames=self.frames, X=self.X, Y=self.Y, n_blobs=10, noise_amplitude=0.2,
-                           blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
-                           background_noise=1, shot_noise=0.2)
+                      blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
 
         data, shifts = sim.simulate()
         self.data = data
@@ -105,18 +108,20 @@ class Test_mc:
     @pytest.mark.parametrize("min_mov", [None, -5, 5])
     @pytest.mark.parametrize("niter_els", [1, 3])
     def test_parameters(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
-                  gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
-                   niter_rig=4, nonneg_movie=True, max_deviation_rigid=3, upsample_factor_grid=4, strides=(50, 50)):
+                        gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
+                        niter_rig=4, nonneg_movie=True, max_deviation_rigid=3, upsample_factor_grid=4,
+                        strides=(50, 50)):
 
         input_, shifts = self.data, self.shifts
 
         # Create MotionCorrect instance
         mc = MotionCorrect(input_,
-                max_shifts=max_shifts, niter_rig=niter_rig, splits_rig=splits_rig,
-                num_splits_to_process_rig=num_splits_to_process_rig, strides=strides, overlaps=overlaps,
-                pw_rigid=pw_rigid, splits_els=splits_els, num_splits_to_process_els=num_splits_to_process_els,
-                upsample_factor_grid=upsample_factor_grid, max_deviation_rigid=max_deviation_rigid,
-                nonneg_movie=nonneg_movie, gSig_filt=gSig_filt,
+                           max_shifts=max_shifts, niter_rig=niter_rig, splits_rig=splits_rig,
+                           num_splits_to_process_rig=num_splits_to_process_rig, strides=strides, overlaps=overlaps,
+                           pw_rigid=pw_rigid, splits_els=splits_els,
+                           num_splits_to_process_els=num_splits_to_process_els,
+                           upsample_factor_grid=upsample_factor_grid, max_deviation_rigid=max_deviation_rigid,
+                           nonneg_movie=nonneg_movie, gSig_filt=gSig_filt,
                            min_mov=min_mov, niter_els=niter_els)
 
         # Perform motion correction
@@ -135,11 +140,12 @@ class Test_mc:
 
         # Create MotionCorrect instance
         mc = MotionCorrect(input_,
-                max_shifts=(6, 6), niter_rig=4, splits_rig=5,
-                num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                pw_rigid=pw_rigid, splits_els=splits_els, num_splits_to_process_els=num_splits_to_process_els,
-                upsample_factor_grid=4, max_deviation_rigid=3,
-                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
+                           max_shifts=(6, 6), niter_rig=4, splits_rig=5,
+                           num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                           pw_rigid=pw_rigid, splits_els=splits_els,
+                           num_splits_to_process_els=num_splits_to_process_els,
+                           upsample_factor_grid=4, max_deviation_rigid=3,
+                           nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -153,11 +159,11 @@ class Test_mc:
 
         # Create MotionCorrect instance
         mc = MotionCorrect(input_,
-                max_shifts=(6, 6), niter_rig=4, splits_rig=splits_rig,
-                num_splits_to_process_rig=num_splits_to_process_rig, strides=(50, 50), overlaps=(10, 10),
-                pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
-                upsample_factor_grid=4, max_deviation_rigid=3,
-                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
+                           max_shifts=(6, 6), niter_rig=4, splits_rig=splits_rig,
+                           num_splits_to_process_rig=num_splits_to_process_rig, strides=(50, 50), overlaps=(10, 10),
+                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           upsample_factor_grid=4, max_deviation_rigid=3,
+                           nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=niter_els)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -168,12 +174,12 @@ class Test_mc:
     def test_movement(self, n_frames, pw_rigid, max_drift):
 
         frames, X, Y = (n_frames, self.X, self.Y)
-        max_shift = int(min(X, Y)/2) - 1
+        max_shift = int(min(X, Y) / 2) - 1
 
         # simulate movement artifacts
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
-                           blob_amplitude=5, max_drift=max_drift, max_jitter=1,
-                           background_noise=1, shot_noise=0.2)
+                      blob_amplitude=5, max_drift=max_drift, max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
 
         data, shifts = sim.simulate()
         assert np.max(shifts) < max_shift, f"simulated data deviates too much"
@@ -181,11 +187,11 @@ class Test_mc:
         # Create MotionCorrect instance
 
         mc = MotionCorrect(data,
-                max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
-                num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
-                upsample_factor_grid=4, max_deviation_rigid=3,
-                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
+                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           upsample_factor_grid=4, max_deviation_rigid=3,
+                           nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -201,12 +207,12 @@ class Test_mc:
     def test_movement_extreme(self, n_frames, pw_rigid, max_drift):
 
         frames, X, Y = (n_frames, self.X, self.Y)
-        max_shift = int(min(X, Y)/2) - 1
+        max_shift = int(min(X, Y) / 2) - 1
 
         # simulate movement artifacts
         sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
-                           blob_amplitude=5, max_drift=max_drift, max_jitter=1,
-                           background_noise=1, shot_noise=0.2)
+                      blob_amplitude=5, max_drift=max_drift, max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
 
         data, shifts = sim.simulate()
         assert np.max(shifts) < max_shift, f"simulated data deviates too much"
@@ -214,11 +220,11 @@ class Test_mc:
         # Create MotionCorrect instance
 
         mc = MotionCorrect(data,
-                max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
-                num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
-                upsample_factor_grid=4, max_deviation_rigid=3,
-                nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
+                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           upsample_factor_grid=4, max_deviation_rigid=3,
+                           nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -227,3 +233,41 @@ class Test_mc:
         # test correct shift reconstruction
         np.allclose(shifts, calc_shifts), f"calculated shifts are to different from True value"
 
+    @pytest.mark.parametrize("n_frames", [25, 100])
+    @pytest.mark.parametrize("pw_rigid", [True, False])
+    @pytest.mark.parametrize("max_drift", [(1e-1), (1e-4, 1e-2), (1e-3, 1e-2), (1e-3, 1e-1)])
+    def test_registration_object(self, n_frames, pw_rigid, max_drift):
+
+        frames, X, Y = (n_frames, self.X, self.Y)
+        max_shift = int(min(X, Y) / 2) - 1
+
+        sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
+                      blob_amplitude=5, max_drift=max_drift, max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
+
+        data, shifts = sim.simulate()
+        assert np.max(shifts) < max_shift, f"simulated data deviates too much"
+
+        mc = MotionCorrect(data,
+                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           upsample_factor_grid=4, max_deviation_rigid=3,
+                           nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
+
+        # Perform motion correction
+        registration_object, target_file = mc.motion_correct(save_movie=True)
+
+        saved_dataset = tifffile.imread(target_file).astype(np.float32)
+
+        if mc.pw_rigid:
+            template = mc.total_template_els
+        else:
+            template = mc.total_template_rig
+        registration_object = jnormcorre.motion_correction.frame_corrector(template, mc.pw_rigid, mc.max_shifts,
+                                                                           mc.strides, mc.overlaps,
+                                                                           mc.max_deviation_rigid, min_mov=mc.min_mov)
+
+        registered_data = registration_object.register_frames(saved_dataset)
+        #Verify that the registration object gives you the same results as the
+        np.allclose(saved_dataset, registered_data), f"calculated shifts are to different from True value"
