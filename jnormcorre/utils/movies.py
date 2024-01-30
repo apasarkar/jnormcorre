@@ -7,30 +7,25 @@ See README for complete attribution.
 """
 
 
-from builtins import str
+import logging
+import os
+import warnings
 from builtins import range
-from past.utils import old_div
+from builtins import str
+from typing import Any, Dict, List, Union
 
 import cv2
-from functools import partial
 import h5py
-import logging
-from matplotlib import animation
 import numpy as np
-import os
-from PIL import Image  
 import pylab as pl
-import scipy.ndimage
 import scipy
-from scipy.io import loadmat
-from skimage.transform import warp, AffineTransform
-from skimage.feature import match_template
-import sys
+import scipy.ndimage
 import tifffile
+from past.utils import old_div
+from scipy.io import loadmat
+from skimage.feature import match_template
+from skimage.transform import warp, AffineTransform
 from tqdm import tqdm
-from typing import Any, Dict, List, Tuple, Union
-import warnings
-from zipfile import ZipFile
 
 from . import timeseries
 
@@ -40,13 +35,9 @@ except:
     pass
 
 from . import timeseries as ts
-from .traces import trace
-
-
 
 
 ##THIS IS A UTILITY FUNCTION
-from typing import Tuple
 def fn_relocated(fn:str) -> str:
     """ If the provided filename does not contain any path elements, this returns what would be its absolute pathname
         as located in get_tempdir(). Otherwise it just returns what it is passed.
