@@ -5,11 +5,10 @@ import numpy as np
 import pytest
 import tifffile
 import h5py
-import logging
 
 from jnormcorre.simulation import SimData
 from jnormcorre.motion_correction import MotionCorrect
-
+from jnormcorre.utils import registrationarrays
 class Test_Simulation:
 
     @pytest.mark.parametrize("frames", [10, 50, 100])
@@ -80,7 +79,12 @@ class Test_mc:
             data, shifts = self.data, self.shifts
             input_ = self.save_sample(tmp_dir.joinpath(name), data, h5_loc=h5_loc)
 
-            mc = MotionCorrect(input_, var_name_hdf5=h5_loc,
+            if name.split(".")[-1] == "tiff":
+                lazy_dataset = registrationarrays.TiffArray(input_)
+            else:
+                lazy_dataset = registrationarrays.Hdf5Array(input_, h5_loc)
+
+            mc = MotionCorrect(lazy_dataset,
                                max_shifts=(6, 6), niter_rig=4, nonneg_movie=True, max_deviation_rigid=3,
                                upsample_factor_grid=4, strides=(50, 50), splits_rig=5, splits_els=5, gSig_filt=None,
                                num_splits_to_process_els=5, num_splits_to_process_rig=5, pw_rigid=True,

@@ -391,7 +391,7 @@ class MotionCorrect(object):
         if self.min_mov is None:
             if self.filter_kernel is None:
                 mi = np.inf
-                for j in range(min(self.lazy_dataset.n_frames, frame_constant)):
+                for j in range(min(self.lazy_dataset.shape[0], frame_constant)):
                     try:
                         mi = min(mi, np.min(self.lazy_dataset[j, :, :]))
                     except StopIteration:
