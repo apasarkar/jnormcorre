@@ -98,22 +98,28 @@ class frame_corrector():
 
 def verify_strides_and_overlaps(dim, stride, overlap):
     if not stride > 0:
-        raise ValueError("Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(
-        stride))
+        raise ValueError(
+            "Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(
+                stride))
     if not overlap > 0:
         raise ValueError("Overlap value needs to be positive. Right now it is {}. See documentation".format(overlap))
     if not dim > 0:
-        raise ValueError("Dim needs to be positive. Right now the length along this FOV axis is {}. See documentation".format(
-        dim))
+        raise ValueError(
+            "Dim needs to be positive. Right now the length along this FOV axis is {}. See documentation".format(
+                dim))
     if not stride < dim:
-        raise ValueError("Stride must be less than the field of view dimension, otherwise this parameter is not meaningful for piecewise-rigid registration. Right now the value of stride is {} and the length of this axis of the FOV is {}. See documentation for more details.".format(
-        stride, dim))
+        raise ValueError(
+            "Stride must be less than the field of view dimension, otherwise this parameter is not meaningful for piecewise-rigid registration. Right now the value of stride is {} and the length of this axis of the FOV is {}. See documentation for more details.".format(
+                stride, dim))
     if not overlap < stride:
-        raise ValueError("The degree of overlap must be less than the stride for piecewise-rigid registration. Right now, the value of overlap is {} and stride is {}. See documentation for more details".format(
-        overlap, stride))
+        raise ValueError(
+            "The degree of overlap must be less than the stride for piecewise-rigid registration. Right now, the value of overlap is {} and stride is {}. See documentation for more details".format(
+                overlap, stride))
     if not stride + overlap < dim:
-        raise ValueError("The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(
-        stride, overlap, dim))
+        raise ValueError(
+            "The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(
+                stride, overlap, dim))
+
 
 def get_file_size(file_name, var_name_hdf5='mov'):
     """ Computes the dimensions of a file or a list of files without loading
@@ -272,15 +278,15 @@ class MotionCorrect(object):
     class implementing motion correction operations
     """
 
-    def __init__(self, fname, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
+    def __init__(self, lazy_dataset, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
                  num_splits_to_process_rig=None, num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32),
                  splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, nonneg_movie=True, pw_rigid=False,
-                 var_name_hdf5='mov', indices=(slice(None), slice(None)), gSig_filt=None, bigtiff=False):
+                 gSig_filt=None, bigtiff=False):
         """
         Constructor class for motion correction operations
 
         Args:
-           fname: str
+           lazy_dataset: str
                path to file to motion correct
 
            min_mov: int16 or float32
@@ -332,34 +338,17 @@ class MotionCorrect(object):
            nonneg_movie: boolean
                make the SAVED movie and template mostly nonnegative by removing min_mov from movie
 
-           var_name_hdf5: str, default: 'mov'
-               If loading from hdf5, name of the variable to load
-
-           indices: tuple(slice), default: (slice(None), slice(None))
-               Use that to apply motion correction only on a part of the FOV
-               
-           gSig_filt: tuple. Default None. 
+           gSig_filt: tuple. Default None.
                 Contains 2 components describing the dimensions of a kernel. We use the kernel to high-pass filter data which has large background contamination.
 
        Returns:
            self
 
         """
-        if 'ndarray' in str(type(fname)):
-            logging.info('Creating file for motion correction "tmp_mov_mot_corr.hdf5"')
-            movies.movie(fname).save('tmp_mov_mot_corr.hdf5', var_name_hdf5=var_name_hdf5)
-            fname = ['tmp_mov_mot_corr.hdf5']
-
-        if not isinstance(fname, list):
-            fname = [fname]
-
         if not isinstance(niter_els, int) or niter_els < 1:
             raise ValueError(f"please provide n_iter as an int of 1 or higher.")
 
-        if not isinstance(var_name_hdf5, str):
-            raise ValueError(f"pleaes provide 'var_name_hdf5' as string")
-
-        self.fname = fname
+        self.lazy_dataset = lazy_dataset
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
         self.niter_els = niter_els
@@ -374,10 +363,9 @@ class MotionCorrect(object):
         self.min_mov = min_mov
         self.nonneg_movie = nonneg_movie
         self.pw_rigid = bool(pw_rigid)
-        self.var_name_hdf5 = var_name_hdf5
-        self.indices = indices
         self.bigtiff = bigtiff
-        self.file_FOV_dims, self.file_num_frames = get_file_size(self.fname, self.var_name_hdf5)
+        self.file_FOV_dims = self.lazy_dataset.shape[1], self.lazy_dataset.shape[2]
+        self.file_num_frames = self.lazy_dataset.shape[0]
 
         # In case gSig_filt is not None, we define a kernel which we use for 1p processing:
         if gSig_filt is not None:
@@ -399,21 +387,19 @@ class MotionCorrect(object):
                 flag for saving motion corrected file(s) as memory mapped file(s)
 
         """
-
+        frame_constant = 400
         if self.min_mov is None:
             if self.filter_kernel is None:
-                iterator = load_iter(self.fname[0], var_name_hdf5=self.var_name_hdf5)
                 mi = np.inf
-                for _ in range(400):
+                for j in range(min(self.lazy_dataset.n_frames, frame_constant)):
                     try:
-                        mi = min(mi, next(iterator).min()[()])
+                        mi = min(mi, np.min(self.lazy_dataset[j, :, :]))
                     except StopIteration:
                         break
                 self.min_mov = mi
             else:
                 self.min_mov = np.array([high_pass_filter_cv(m_, self.filter_kernel)
-                                         for m_ in movies.load(self.fname[0], var_name_hdf5=self.var_name_hdf5,
-                                                               subindices=slice(400))]).min()
+                                         for m_ in self.lazy_dataset[:frame_constant, :, :]]).min()
 
         if self.pw_rigid:
             # Verify that the strides and overlaps are meaningfully defined
@@ -458,30 +444,26 @@ class MotionCorrect(object):
         self.fname_tot_rig: List = []
         self.shifts_rig: List = []
 
-        for fname_cur in self.fname:
-            _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = motion_correct_batch_rigid(
-                fname_cur,
-                self.max_shifts,
-                splits=self.splits_rig,
-                num_splits_to_process=self.num_splits_to_process_rig,
-                num_iter=self.niter_rig,
-                template=self.total_template_rig,
-                save_movie_rigid=save_movie,
-                add_to_movie=-self.min_mov,
-                nonneg_movie=self.nonneg_movie,
-                var_name_hdf5=self.var_name_hdf5,
-                indices=self.indices,
-                filter_kernel=self.filter_kernel,
-                bigtiff=self.bigtiff)
-            if template is None:
-                self.total_template_rig = _total_template_rig
+        _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = motion_correct_batch_rigid(
+            self.lazy_dataset,
+            self.max_shifts,
+            splits=self.splits_rig,
+            num_splits_to_process=self.num_splits_to_process_rig,
+            num_iter=self.niter_rig,
+            template=self.total_template_rig,
+            save_movie_rigid=save_movie,
+            add_to_movie=-self.min_mov,
+            nonneg_movie=self.nonneg_movie,
+            filter_kernel=self.filter_kernel,
+            bigtiff=self.bigtiff)
+        if template is None:
+            self.total_template_rig = _total_template_rig
 
-            self.templates_rig += _templates_rig
-            self.fname_tot_rig += [_fname_tot_rig]
-            self.shifts_rig += _shifts_rig
+        self.templates_rig += _templates_rig
+        self.fname_tot_rig += [_fname_tot_rig]
+        self.shifts_rig += _shifts_rig
 
-    def motion_correct_pwrigid(self, save_movie: bool = True, template: np.ndarray = None,
-                               show_template: bool = False) -> None:
+    def motion_correct_pwrigid(self, save_movie: bool = True, template: np.ndarray = None) -> None:
         """Perform pw-rigid motion correction
 
         Args:
@@ -522,32 +504,464 @@ class MotionCorrect(object):
         self.y_shifts_els: List = []
 
         self.coord_shifts_els: List = []
-        for name_cur in self.fname:
-            _fname_tot_els, new_template_els, _templates_els, \
-                _x_shifts_els, _y_shifts_els, _z_shifts_els, _coord_shifts_els = motion_correct_batch_pwrigid(
-                name_cur, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
-                upsample_factor_grid=self.upsample_factor_grid,
-                max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
-                num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter,
-                template=self.total_template_els,
-                save_movie=save_movie, nonneg_movie=self.nonneg_movie, var_name_hdf5=self.var_name_hdf5,
-                indices=self.indices, filter_kernel=self.filter_kernel, bigtiff=self.bigtiff)
 
-            if show_template:
-                pl.imshow(new_template_els)
-                pl.pause(.5)
-            if np.isnan(np.sum(new_template_els)):
-                raise Exception(
-                    'Template contains NaNs, something went wrong. Reconsider the parameters')
+        _fname_tot_els, new_template_els, _templates_els, \
+            _x_shifts_els, _y_shifts_els, _z_shifts_els, _coord_shifts_els = motion_correct_batch_pwrigid(
+            self.lazy_dataset, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
+            upsample_factor_grid=self.upsample_factor_grid,
+            max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
+            num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter,
+            template=self.total_template_els,
+            save_movie=save_movie, nonneg_movie=self.nonneg_movie, filter_kernel=self.filter_kernel,
+            bigtiff=self.bigtiff)
 
-            if template is None:
-                self.total_template_els = new_template_els
+        if np.isnan(np.sum(new_template_els)):
+            raise Exception(
+                'Template contains NaNs, something went wrong. Reconsider the parameters')
 
-            self.fname_tot_els += [_fname_tot_els]
-            self.templates_els += _templates_els
-            self.x_shifts_els += _x_shifts_els
-            self.y_shifts_els += _y_shifts_els
-            self.coord_shifts_els += _coord_shifts_els
+        if template is None:
+            self.total_template_els = new_template_els
+
+        self.fname_tot_els += [_fname_tot_els]
+        self.templates_els += _templates_els
+        self.x_shifts_els += _x_shifts_els
+        self.y_shifts_els += _y_shifts_els
+        self.coord_shifts_els += _coord_shifts_els
+
+
+def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
+                               template=None, save_movie_rigid=False, add_to_movie=None,
+                               nonneg_movie=False, filter_kernel=None, bigtiff=False):
+    """
+    Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
+
+    Args:
+        fname: str
+            name of the movie to motion correct. It should not contain nans. All the loadable formats from CaImAn are acceptable
+
+        max_shifts: tuple
+            x and y (and z if 3D) maximum allowed shifts
+
+        splits: int
+            number of batches in which the movies is subdivided
+
+        num_splits_to_process: int
+            number of batches to process. when not None, the movie is not saved since only a random subset of batches will be processed
+
+        num_iter: int
+            number of iterations to perform. The more iteration the better will be the template.
+
+        template: ndarray
+            if a good approximation of the template to register is available, it can be used
+
+        save_movie_rigid: boolean
+             toggle save movie
+
+        subidx: slice
+            Indices to slice
+
+        indices: tuple(slice), default: (slice(None), slice(None))
+           Use that to apply motion correction only on a part of the FOV
+
+        filter_kernel: ndarray. Default: None.
+            Used to high-pass filter 1p data for template estimation/registration
+
+    Returns:
+         fname_tot_rig: str
+
+         total_template:ndarray
+
+         templates:list
+              list of produced templates, one per batch
+
+         shifts: list
+              inferred rigid shifts to correct the movie
+
+    Raises:
+        Exception 'The movie contains nans. Nans are not allowed!'
+
+    """
+
+    T = lazy_dataset.shape[0]
+    Ts = np.arange(T).shape[0]
+    step = Ts // 50
+    corrected_slicer = slice(None, min(T-1, 4000), step + 1)  # Don't need too many frames to init the template
+    m = lazy_dataset[corrected_slicer, :, :]
+
+    # Initialize template by sampling frames uniformly throughout the movie and taking the median
+    if template is None:
+        if filter_kernel is not None:
+            m = np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m])
+
+        template = bin_median(m)
+
+    new_templ = template
+    if add_to_movie is None:
+        add_to_movie = -np.min(template)
+
+    if np.isnan(add_to_movie):
+        logging.error('The movie contains NaNs. NaNs are not allowed!')
+        raise Exception('The movie contains NaNs. NaNs are not allowed!')
+    else:
+        logging.debug('Adding to movie ' + str(add_to_movie))
+
+    fname_tot_rig = None
+    res_rig: List = []
+    for iter_ in range(num_iter):
+        logging.debug(iter_)
+        old_templ = new_templ.copy()
+        if iter_ == num_iter - 1 and save_movie_rigid:
+            save_flag = True
+        else:
+            save_flag = False
+
+        if iter_ == num_iter - 1 and save_flag:  # Idea: If we are saving out the full movie, sampling to just get the template is insufficient
+            num_splits_to_process = None
+        logging.info("We are about to enter motion correction piecewise")
+        fname_tot_rig, res_rig = motion_correction_piecewise(lazy_dataset, splits, strides=None, overlaps=None,
+                                                             add_to_movie=add_to_movie, template=old_templ,
+                                                             max_shifts=max_shifts, max_deviation_rigid=0,
+                                                             save_movie=save_flag, num_splits=num_splits_to_process,
+                                                             nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
+                                                             bigtiff=bigtiff)
+
+        if filter_kernel is not None:
+            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
+        else:
+            new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
+
+    total_template = new_templ
+    templates = []
+    shifts: List = []
+    for rr in res_rig:
+        shift_info, idxs, tmpl = rr
+        templates.append(tmpl)
+        num_idxs = len(list(range(idxs.start, idxs.stop, 1 if idxs.step is None else idxs.step)))
+        shifts += [sh[0] for sh in shift_info[:num_idxs]]
+
+    return fname_tot_rig, total_template, templates, shifts
+
+
+def motion_correct_batch_pwrigid(lazy_dataset, max_shifts, strides, overlaps, add_to_movie, newoverlaps=None,
+                                 newstrides=None,
+                                 upsample_factor_grid=4, max_deviation_rigid=3,
+                                 splits=56, num_splits_to_process=None, num_iter=1,
+                                 template=None, save_movie=False, nonneg_movie=False,
+                                 filter_kernel=None, bigtiff=False):
+    """
+    Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
+
+    Args:
+        fname: str
+            name of the movie to motion correct. It should not contain nans. All the loadable formats from CaImAn are acceptable
+
+        strides: tuple
+            strides of patches along x and y
+
+        overlaps:
+            overlaps of patches along x and y. example: If strides = (64,64) and overlaps (32,32) patches will be (96,96)
+
+        newstrides: tuple
+            overlaps after upsampling
+
+        newoverlaps: tuple
+            strides after upsampling
+
+        max_shifts: tuple
+            x and y maximum allowed shifts
+
+        splits: int
+            number of batches in which the movies is subdivided
+
+        num_splits_to_process: int
+            number of batches to process. when not None, the movie is not saved since only a random subset of batches will be processed
+
+        num_iter: int
+            number of iterations to perform. The more iteration the better will be the template.
+
+        template: ndarray
+            if a good approximation of the template to register is available, it can be used
+
+        save_movie_rigid: boolean
+             toggle save movie
+
+        indices: tuple(slice), default: (slice(None), slice(None))
+           Use that to apply motion correction only on a part of the FOV
+
+    Returns:
+        fname_tot_rig: str
+
+        total_template:ndarray
+
+        templates:list
+            list of produced templates, one per batch
+
+        shifts: list
+            inferred rigid shifts to corrrect the movie
+
+    Raises:
+        Exception 'You need to initialize the template with a good estimate. See the motion'
+                        '_correct_batch_rigid function'
+    """
+    if template is None:
+        raise Exception('You need to initialize the template with a good estimate. See the motion'
+                        '_correct_batch_rigid function')
+    else:
+        new_templ = template
+
+    if np.isnan(add_to_movie):
+        raise Exception('The template contains NaNs. NaNs are not allowed!')
+    else:
+        logging.debug('Adding to movie ' + str(add_to_movie))
+
+    for iter_ in range(num_iter):
+        logging.debug(iter_)
+        old_templ = new_templ.copy()
+
+        if iter_ == num_iter - 1 and save_movie:
+            save_flag = True
+        else:
+            save_flag = False
+
+        if iter_ == num_iter - 1 and save_flag:
+            num_splits_to_process = None
+        fname_tot_els, res_el = motion_correction_piecewise(lazy_dataset, splits, strides, overlaps,
+                                                            add_to_movie=add_to_movie, template=old_templ,
+                                                            max_shifts=max_shifts,
+                                                            max_deviation_rigid=max_deviation_rigid,
+                                                            newoverlaps=newoverlaps, newstrides=newstrides,
+                                                            upsample_factor_grid=upsample_factor_grid,
+                                                            save_movie=save_flag,
+                                                            num_splits=num_splits_to_process,
+                                                            nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
+                                                            bigtiff=bigtiff)
+
+        new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
+        if filter_kernel is not None:
+            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
+
+    total_template = new_templ
+    templates = []
+    x_shifts = []
+    y_shifts = []
+    z_shifts = []
+    coord_shifts = []
+    for rr in res_el:
+        shift_info_chunk, idxs_chunk, tmpl_chunk = rr
+        templates.append(tmpl_chunk)
+
+        for shift_info in shift_info_chunk:
+            total_shift = shift_info
+            x_shifts.append(np.array([sh[0] for sh in total_shift]))
+            y_shifts.append(np.array([sh[1] for sh in total_shift]))
+            coord_shifts.append(None)
+    return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
+
+
+def motion_correction_piecewise(lazy_dataset, splits, strides, overlaps, add_to_movie=0, template=None,
+                                max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
+                                upsample_factor_grid=4, save_movie=True, num_splits=None, nonneg_movie=False,
+                                filter_kernel=None, bigtiff=False):
+    """
+    TODO DOCUMENT
+    """
+
+    dims = lazy_dataset.shape[1], lazy_dataset.shape[2]
+    T = lazy_dataset.shape[0]
+
+    if isinstance(splits, int):
+        idxs = calculate_splits(T, splits)
+    else:
+        idxs = splits
+        save_movie = False
+    if template is None:
+        raise Exception('Template must be well-defined for the registration step')
+
+    shape_mov = (np.prod(dims), T)
+    if num_splits is not None:
+        num_splits = min(num_splits, len(idxs))
+        idxs = random.sample(idxs, num_splits)
+        save_movie = False
+
+    if save_movie:
+        import datetime
+        current_datetime = datetime.datetime.now()
+        timestamp_str = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
+        fname_tot = f"data_{timestamp_str}.tiff"
+    else:
+        fname_tot = None
+
+    pars = []
+    for idx in idxs:
+        logging.debug('Processing: frames: {}'.format(idx))
+        pars.append(
+            [lazy_dataset, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
+                add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
+             newoverlaps, newstrides, nonneg_movie, filter_kernel])
+
+    split_constant = load_split_heuristic(dims[0], dims[1], T)
+    res = tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
+    return fname_tot, res
+
+
+def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
+    """
+    Contains logic to load multiple chunks of data, register it to template, and return estimated shifts + local template info
+
+    Inputs:
+        param_list: tuple. Large tuple of parameters for performing registration on each chunk of data
+        split_constant: int. Number of frames we register at a time (to avoid GPU OOM errors)
+        bigtiff: Boolean. Indicates whether we save with bigtiff options or not
+    Returns:
+        results_list. List of tuples, one for each chunk of data which was processed. Each tuple contains:
+            1. shift_into. list of lists. Each nested list contains a np.ndarray of shape (2,) describing the xy shifts applied to each frame of the data
+            2. idxs. np.ndarray. Shape (T,) where T is the number of frames registered in this chunk of data
+            3. new_temp. np.ndarray. Shape (dim1, dim2) where dim1 and dim2 are height and length of FOV.
+
+    Side Effect: If specified, writes corrected frames to a tiff memmap file (name given by out_fname)
+    """
+    num_workers = 0
+    tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
+    loader_obj = torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
+                                             shuffle=False, num_workers=num_workers, collate_fn=regular_collate,
+                                             timeout=0)
+
+    results_list = []
+    start_pt_save = 0
+    memmap_placeholder = None
+    for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
+        num_iters = math.ceil(data[0].shape[0] / split_constant)
+        imgs_net, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            nonneg_movie, filter_kernel = data
+        if out_fname is not None:
+            inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
+            if memmap_placeholder is None:
+                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype,
+                                                     bigtiff=bigtiff)
+        for j in range(num_iters):
+
+            start_pt = split_constant * j
+            end_pt = min(data[0].shape[0], start_pt + split_constant)
+            imgs = imgs_net[start_pt:end_pt, :, :]
+            shift_info = []
+            upsample_factor_fft = 10  # Hardcoded from original method
+
+            if max_deviation_rigid == 0:
+                if filter_kernel is None:
+                    outs = tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
+                else:
+                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
+                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
+                mc[start_pt:end_pt, :, :] = outs[0]
+                shift_info.extend([[k] for k in np.array(outs[1])])
+            else:
+                if filter_kernel is None:
+                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0],
+                                                         overlaps[1], \
+                                                         max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                         add_to_movie)
+                else:
+                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
+                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1],
+                                                            overlaps[0], overlaps[1], \
+                                                            max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                            add_to_movie)
+
+                mc[start_pt:end_pt, :, :] = outs[0]
+                shift_info.extend([[k] for k in np.array(outs[1])])
+
+        if out_fname is not None:
+            memmap_placeholder[start_pt_save:start_pt_save + mc.shape[0], :, :] = mc
+            start_pt_save += mc.shape[0]
+            memmap_placeholder.flush()
+        new_temp = generate_template_chunk(mc)
+
+        results_list.append((shift_info, idxs, new_temp))
+
+    return results_list
+
+
+class tile_and_correct_dataset():
+    def __init__(self, param_list):
+        self.param_list = param_list
+
+    def __len__(self):
+        return len(self.param_list)
+
+    def __getitem__(self, index):
+        lazy_dataset, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            nonneg_movie, filter_kernel = self.param_list[index]
+
+        imgs = lazy_dataset[idxs, :, :]
+        mc = np.zeros(imgs.shape, dtype=np.float32)
+
+        return imgs, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            nonneg_movie, filter_kernel
+
+
+def generate_template_chunk(arr, batch_size=250000):
+    dim_1_step = int(math.sqrt(batch_size))
+    dim_2_step = int(math.sqrt(batch_size))
+
+    dim1_net_iters = math.ceil(arr.shape[1] / dim_1_step)
+    dim2_net_iters = math.ceil(arr.shape[2] / dim_2_step)
+
+    total_output = np.zeros((arr.shape[1], arr.shape[2]))
+    for k in range(dim1_net_iters):
+        for j in range(dim2_net_iters):
+            start_dim1 = k * dim_1_step
+            end_dim1 = min(start_dim1 + dim_1_step, arr.shape[1])
+            start_dim2 = k * dim_2_step
+            end_dim2 = min(start_dim2 + dim_2_step, arr.shape[2])
+            total_output[start_dim1:end_dim1, start_dim2:end_dim2] = nan_processing(
+                arr[:, start_dim1:end_dim1, start_dim2:end_dim2])
+
+    return total_output
+
+
+@partial(jit)
+def nan_processing(arr):
+    p = jnp.nanmean(arr, 0)
+    q = jnp.nanmin(p)
+    r = jnp.nan_to_num(p, q)
+    return r
+
+
+def regular_collate(batch):
+    return batch[0]
+
+
+def calculate_splits(T, splits) -> List:
+    '''
+    Heuristic for calculating splits
+    '''
+    step = T // splits
+    remainder = T % splits
+
+    start = 0
+    slice_list = []
+    for i in range(splits):
+        end = start + step + (1 if i < remainder else 0)
+        slice_list.append(slice(start, end))
+        start = end
+    return slice_list
+
+def load_split_heuristic(d1, d2, T):
+    '''
+    Heuristic for determining how many frames to register at a time (to avoid GPU OOM)
+    '''
+
+    if d1 * d2 > 512 * 512:
+        new_T = 20
+    elif d1 * d2 > 100000:
+        new_T = 100
+    else:
+        new_T = 2000
+
+    return min(T, new_T)
 
 
 def bin_median(mat, window=10, exclude_nans=True):
@@ -586,6 +1000,7 @@ def bin_median(mat, window=10, exclude_nans=True):
 def _upsampled_dft_full(data, upsampled_region_size, upsample_factor, axis_offsets):
     return np.array(_upsampled_dft_jax(data, upsampled_region_size,
                                        upsample_factor, axis_offsets))
+
 
 # @partial(jit, static_argnums=(1,))
 def _upsampled_dft_jax(data, upsampled_region_size,
@@ -803,6 +1218,7 @@ def _compute_phasediff(cross_correlation_max):
     
     '''
     return jnp.angle(cross_correlation_max)
+
 
 # @partial(jit)
 def get_freq_comps_jax(src_image, target_image):
@@ -1324,7 +1740,9 @@ def register_translation_jax_full(src_image, target_image, upsample_factor, \
 
     return shifts, src_freq, _compute_phasediff(CCmax)
 
+
 vmap_register_translation = vmap(register_translation_jax_full, in_axes=(0, 0, None, None, None, None))
+
 
 #########
 ### apply_shifts function + helper code
@@ -1341,15 +1759,19 @@ def update_src_freq_jax(src_freq):
 def update_src_freq_identity(src_freq):
     return jnp.complex128(src_freq)
 
+
 def update_src_freq_flag(src_freq, flag):
     output = jnp.complex128(jax.lax.cond(~flag, update_src_freq_jax, update_src_freq_identity, src_freq))
     return output
 
+
 def first_value(a, b):
     return a
 
+
 def second_value(a, b):
     return b
+
 
 # @partial(jit)
 def ceil_max(a, b):
@@ -1361,6 +1783,7 @@ def ceil_max(a, b):
 def floor_min(a, b):
     interm = jax.lax.cond(a > b, second_value, first_value, a, b)
     return jnp.fix(interm)
+
 
 # @partial(jit)
 def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
@@ -1496,6 +1919,7 @@ def fill_minh(img, k):
 
 def return_identity_mins(in_var, k):
     return in_var
+
 
 # @partial(jit, static_argnums=(4,))
 def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_movie):
@@ -1894,502 +2318,3 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
 tile_and_correct_pwrigid_vmap = jit(
     vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(2, 3, 4, 5, 7))
-
-
-def motion_correct_batch_rigid(fname, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
-                               template=None, save_movie_rigid=False, add_to_movie=None,
-                               nonneg_movie=False, subidx=slice(None, None, 1), var_name_hdf5='mov',
-                               indices=(slice(None), slice(None)), filter_kernel=None, bigtiff=False):
-    """
-    Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
-
-    Args:
-        fname: str
-            name of the movie to motion correct. It should not contain nans. All the loadable formats from CaImAn are acceptable
-
-        max_shifts: tuple
-            x and y (and z if 3D) maximum allowed shifts
-
-        splits: int
-            number of batches in which the movies is subdivided
-
-        num_splits_to_process: int
-            number of batches to process. when not None, the movie is not saved since only a random subset of batches will be processed
-
-        num_iter: int
-            number of iterations to perform. The more iteration the better will be the template.
-
-        template: ndarray
-            if a good approximation of the template to register is available, it can be used
-
-        save_movie_rigid: boolean
-             toggle save movie
-
-        subidx: slice
-            Indices to slice
-
-        indices: tuple(slice), default: (slice(None), slice(None))
-           Use that to apply motion correction only on a part of the FOV
-           
-        filter_kernel: ndarray. Default: None. 
-            Used to high-pass filter 1p data for template estimation/registration
-
-    Returns:
-         fname_tot_rig: str
-
-         total_template:ndarray
-
-         templates:list
-              list of produced templates, one per batch
-
-         shifts: list
-              inferred rigid shifts to correct the movie
-
-    Raises:
-        Exception 'The movie contains nans. Nans are not allowed!'
-
-    """
-
-    dims, T = get_file_size(fname, var_name_hdf5=var_name_hdf5)
-    Ts = np.arange(T)[subidx].shape[0]
-    step = Ts // 50
-    corrected_slicer = slice(subidx.start, subidx.stop, step + 1)
-    m = load(fname, var_name_hdf5=var_name_hdf5, subindices=corrected_slicer)
-
-    if len(m.shape) < 3:
-        m = load(fname, var_name_hdf5=var_name_hdf5)
-        m = m[corrected_slicer]
-        logging.warning("Your original file was saved as a single page " +
-                        "file. Consider saving it in multiple smaller files" +
-                        "with size smaller than 4GB (if it is a .tif file)")
-
-    m = m[:, indices[0], indices[1]]
-
-    if template is None:
-        if filter_kernel is not None:
-            m = movies.movie(
-                np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m]))
-
-        if not m.flags['WRITEABLE']:
-            m = m.copy()
-        template = bin_median(
-            m.motion_correct(max_shifts[1], max_shifts[0], template=None)[0])
-
-    new_templ = template
-    if add_to_movie is None:
-        add_to_movie = -np.min(template)
-
-    if np.isnan(add_to_movie):
-        logging.error('The movie contains NaNs. NaNs are not allowed!')
-        raise Exception('The movie contains NaNs. NaNs are not allowed!')
-    else:
-        logging.debug('Adding to movie ' + str(add_to_movie))
-
-    save_movie = save_movie_rigid
-    fname_tot_rig = None
-    res_rig: List = []
-    for iter_ in range(num_iter):
-        logging.debug(iter_)
-        old_templ = new_templ.copy()
-        if iter_ == num_iter - 1:
-            save_movie = save_movie_rigid
-        if isinstance(fname, tuple):
-            base_name = os.path.split(fname[0])[-1][:-4] + '_rig_'
-        else:
-            base_name = os.path.split(fname)[-1][:-4] + '_rig_'
-
-        if iter_ == num_iter - 1 and save_movie_rigid:
-            save_flag = True
-        else:
-            save_flag = False
-
-        if iter_ == num_iter - 1 and save_flag:  # Idea: If we are saving out the full movie, sampling to just get the template is insufficient
-            num_splits_to_process = None
-        logging.info("We are about to enter motion correction piecewise")
-        fname_tot_rig, res_rig = motion_correction_piecewise(fname, splits, strides=None, overlaps=None,
-                                                             add_to_movie=add_to_movie, template=old_templ,
-                                                             max_shifts=max_shifts, max_deviation_rigid=0,
-                                                             save_movie=save_flag, base_name=base_name, subidx=subidx,
-                                                             num_splits=num_splits_to_process,
-                                                             nonneg_movie=nonneg_movie,
-                                                             var_name_hdf5=var_name_hdf5, indices=indices,
-                                                             filter_kernel=filter_kernel, bigtiff=bigtiff)
-
-        if filter_kernel is not None:
-            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
-        else:
-            new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
-
-    total_template = new_templ
-    templates = []
-    shifts: List = []
-    for rr in res_rig:
-        shift_info, idxs, tmpl = rr
-        templates.append(tmpl)
-        shifts += [sh[0] for sh in shift_info[:len(idxs)]]
-
-    return fname_tot_rig, total_template, templates, shifts
-
-
-def motion_correct_batch_pwrigid(fname, max_shifts, strides, overlaps, add_to_movie, newoverlaps=None, newstrides=None,
-                                 upsample_factor_grid=4, max_deviation_rigid=3,
-                                 splits=56, num_splits_to_process=None, num_iter=1,
-                                 template=None, save_movie=False, nonneg_movie=False,
-                                 var_name_hdf5='mov', indices=(slice(None), slice(None)),
-                                 filter_kernel=None, bigtiff=False):
-    """
-    Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
-
-    Args:
-        fname: str
-            name of the movie to motion correct. It should not contain nans. All the loadable formats from CaImAn are acceptable
-
-        strides: tuple
-            strides of patches along x and y 
-
-        overlaps:
-            overlaps of patches along x and y. example: If strides = (64,64) and overlaps (32,32) patches will be (96,96)
-
-        newstrides: tuple
-            overlaps after upsampling
-
-        newoverlaps: tuple
-            strides after upsampling
-
-        max_shifts: tuple
-            x and y maximum allowed shifts 
-
-        splits: int
-            number of batches in which the movies is subdivided
-
-        num_splits_to_process: int
-            number of batches to process. when not None, the movie is not saved since only a random subset of batches will be processed
-
-        num_iter: int
-            number of iterations to perform. The more iteration the better will be the template.
-
-        template: ndarray
-            if a good approximation of the template to register is available, it can be used
-
-        save_movie_rigid: boolean
-             toggle save movie
-
-        indices: tuple(slice), default: (slice(None), slice(None))
-           Use that to apply motion correction only on a part of the FOV
-
-    Returns:
-        fname_tot_rig: str
-
-        total_template:ndarray
-
-        templates:list
-            list of produced templates, one per batch
-
-        shifts: list
-            inferred rigid shifts to corrrect the movie
-
-    Raises:
-        Exception 'You need to initialize the template with a good estimate. See the motion'
-                        '_correct_batch_rigid function'
-    """
-    if template is None:
-        raise Exception('You need to initialize the template with a good estimate. See the motion'
-                        '_correct_batch_rigid function')
-    else:
-        new_templ = template
-
-    if np.isnan(add_to_movie):
-        logging.error('The template contains NaNs. NaNs are not allowed!')
-        raise Exception('The template contains NaNs. NaNs are not allowed!')
-    else:
-        logging.debug('Adding to movie ' + str(add_to_movie))
-
-    for iter_ in range(num_iter):
-        logging.debug(iter_)
-        old_templ = new_templ.copy()
-
-        if iter_ == num_iter - 1:
-            save_movie = save_movie
-            if save_movie:
-
-                if isinstance(fname, tuple):
-                    logging.debug(f'saving mmap of {fname[0]} to {fname[-1]}')
-                else:
-                    logging.debug(f'saving mmap of {fname}')
-
-        if isinstance(fname, tuple):
-            base_name = os.path.split(fname[0])[-1][:-4] + '_els_'
-        else:
-            base_name = os.path.split(fname)[-1][:-4] + '_els_'
-
-        if iter_ == num_iter - 1 and save_movie:
-            save_flag = True
-        else:
-            save_flag = False
-
-        if iter_ == num_iter - 1 and save_flag:
-            num_splits_to_process = None
-        fname_tot_els, res_el = motion_correction_piecewise(fname, splits, strides, overlaps,
-                                                            add_to_movie=add_to_movie, template=old_templ,
-                                                            max_shifts=max_shifts,
-                                                            max_deviation_rigid=max_deviation_rigid,
-                                                            newoverlaps=newoverlaps, newstrides=newstrides,
-                                                            upsample_factor_grid=upsample_factor_grid, order='F',
-                                                            save_movie=save_flag,
-                                                            base_name=base_name, num_splits=num_splits_to_process,
-                                                            nonneg_movie=nonneg_movie, var_name_hdf5=var_name_hdf5,
-                                                            indices=indices, filter_kernel=filter_kernel,
-                                                            bigtiff=bigtiff)
-
-        new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
-        if filter_kernel is not None:
-            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
-
-    total_template = new_templ
-    templates = []
-    x_shifts = []
-    y_shifts = []
-    z_shifts = []
-    coord_shifts = []
-    for rr in res_el:
-        shift_info_chunk, idxs_chunk, tmpl_chunk = rr
-        templates.append(tmpl_chunk)
-        for shift_info, _ in zip(shift_info_chunk, idxs_chunk):
-            total_shift = shift_info
-            x_shifts.append(np.array([sh[0] for sh in total_shift]))
-            y_shifts.append(np.array([sh[1] for sh in total_shift]))
-            coord_shifts.append(None)
-    return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
-
-
-def generate_template_chunk(arr, batch_size=250000):
-    dim_1_step = int(math.sqrt(batch_size))
-    dim_2_step = int(math.sqrt(batch_size))
-
-    dim1_net_iters = math.ceil(arr.shape[1] / dim_1_step)
-    dim2_net_iters = math.ceil(arr.shape[2] / dim_2_step)
-
-    total_output = np.zeros((arr.shape[1], arr.shape[2]))
-    for k in range(dim1_net_iters):
-        for j in range(dim2_net_iters):
-            start_dim1 = k * dim_1_step
-            end_dim1 = min(start_dim1 + dim_1_step, arr.shape[1])
-            start_dim2 = k * dim_2_step
-            end_dim2 = min(start_dim2 + dim_2_step, arr.shape[2])
-            total_output[start_dim1:end_dim1, start_dim2:end_dim2] = nan_processing(
-                arr[:, start_dim1:end_dim1, start_dim2:end_dim2])
-
-    return total_output
-
-
-@partial(jit)
-def nan_processing(arr):
-    p = jnp.nanmean(arr, 0)
-    q = jnp.nanmin(p)
-    r = jnp.nan_to_num(p, q)
-    return r
-
-
-class tile_and_correct_dataset():
-    def __init__(self, param_list):
-        self.param_list = param_list
-
-    def __len__(self):
-        return len(self.param_list)
-
-    def __getitem__(self, index):
-        img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-            nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel = self.param_list[index]
-
-        imgs = load(img_name, subindices=idxs, var_name_hdf5=var_name_hdf5)
-        imgs = np.array(imgs[(slice(None),) + indices])
-        mc = np.zeros(imgs.shape, dtype=np.float32)
-
-        return imgs, mc, img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-            nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel
-
-
-def regular_collate(batch):
-    return batch[0]
-
-
-def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
-    """
-    Contains logic to load multiple chunks of data, register it to template, and return estimated shifts + local template info
-
-    Inputs:
-        param_list: tuple. Large tuple of parameters for performing registration on each chunk of data
-        split_constant: int. Number of frames we register at a time (to avoid GPU OOM errors)
-        bigtiff: Boolean. Indicates whether we save with bigtiff options or not
-    Returns:
-        results_list. List of tuples, one for each chunk of data which was processed. Each tuple contains:
-            1. shift_into. list of lists. Each nested list contains a np.ndarray of shape (2,) describing the xy shifts applied to each frame of the data
-            2. idxs. np.ndarray. Shape (T,) where T is the number of frames registered in this chunk of data
-            3. new_temp. np.ndarray. Shape (dim1, dim2) where dim1 and dim2 are height and length of FOV.
-
-    Side Effect: If specified, writes corrected frames to a tiff memmap file (name given by out_fname)
-    """
-    num_workers = 0
-    tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
-    loader_obj = torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
-                                             shuffle=False, num_workers=num_workers, collate_fn=regular_collate,
-                                             timeout=0)
-
-    results_list = []
-    start_pt_save = 0
-    memmap_placeholder = None
-    for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
-        num_iters = math.ceil(data[0].shape[0] / split_constant)
-        imgs_net, mc, img_name, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-            nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel = data
-        if out_fname is not None:
-            inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
-            if memmap_placeholder is None:
-                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype,
-                                                     bigtiff=bigtiff)
-        for j in range(num_iters):
-
-            start_pt = split_constant * j
-            end_pt = min(data[0].shape[0], start_pt + split_constant)
-            imgs = imgs_net[start_pt:end_pt, :, :]
-            if isinstance(img_name, tuple):
-                name, extension = os.path.splitext(img_name[0])[:2]
-            else:
-                name, extension = os.path.splitext(img_name)[:2]
-            extension = extension.lower()
-            shift_info = []
-
-            upsample_factor_fft = 10  # Was originally hardcoded...
-
-            if not imgs[0].shape == template.shape:
-                template = template[indices]
-            if max_deviation_rigid == 0:
-                if filter_kernel is None:
-                    outs = tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
-                else:
-                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
-                mc[start_pt:end_pt, :, :] = outs[0]
-                shift_info.extend([[k] for k in np.array(outs[1])])
-            else:
-                if filter_kernel is None:
-                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0],
-                                                         overlaps[1], \
-                                                         max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                         add_to_movie)
-                else:
-                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1],
-                                                            overlaps[0], overlaps[1], \
-                                                            max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                            add_to_movie)
-
-                mc[start_pt:end_pt, :, :] = outs[0]
-                shift_info.extend([[k] for k in np.array(outs[1])])
-
-        if out_fname is not None:
-            memmap_placeholder[start_pt_save:start_pt_save + mc.shape[0], :, :] = mc
-            start_pt_save += mc.shape[0]
-            memmap_placeholder.flush()
-        new_temp = generate_template_chunk(mc)
-
-        results_list.append((shift_info, idxs, new_temp))
-
-    return results_list
-
-
-def calculate_splits(T, splits):
-    '''
-    Heuristic for calculating splits
-    '''
-    out = np.array_split(list(range(T)), splits)
-    return out
-
-
-def load_split_heuristic(d1, d2, T):
-    '''
-    Heuristic for determining how many frames to register at a time (to avoid GPU OOM)
-    '''
-
-    if d1 * d2 > 512 * 512:
-        new_T = 20
-    elif d1 * d2 > 100000:
-        new_T = 100
-    else:
-        new_T = 2000
-
-    return min(T, new_T)
-
-
-def motion_correction_piecewise(fname, splits, strides, overlaps, add_to_movie=0, template=None,
-                                max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
-                                upsample_factor_grid=4, order='F', save_movie=True,
-                                base_name=None, subidx=None, num_splits=None, nonneg_movie=False, var_name_hdf5='mov',
-                                indices=(slice(None), slice(None)), filter_kernel=None, bigtiff=False):
-    """
-    TODO DOCUMENT
-    """
-
-    if isinstance(fname, tuple):
-        name, extension = os.path.splitext(fname[0])[:2]
-    else:
-        name, extension = os.path.splitext(fname)[:2]
-    extension = extension.lower()
-    is_fiji = False
-
-    dims, T = get_file_size(fname, var_name_hdf5=var_name_hdf5)
-    z = np.zeros(dims)
-    dims = z[indices].shape
-    logging.debug('Number of Splits: {}'.format(splits))
-
-    if isinstance(splits, int):
-        if subidx is None:
-            rng = range(T)
-        else:
-            rng = range(T)[subidx]
-
-        idxs = calculate_splits(T, splits)
-
-    else:
-        idxs = splits
-        save_movie = False
-    if template is None:
-        raise Exception('Not implemented')
-
-    shape_mov = (np.prod(dims), T)
-    if num_splits is not None:
-        num_splits = min(num_splits, len(idxs))
-        idxs = random.sample(idxs, num_splits)
-        save_movie = False
-
-    if save_movie:
-        if base_name is None:
-            base_name = os.path.split(fname)[1][:-4]
-        fname_tot: Optional[str] = tiff_frames_filename(base_name, dims, T, order)
-        if isinstance(fname, tuple):
-            fname_tot = os.path.join(os.path.split(fname[0])[0], fname_tot)
-        else:
-            fname_tot = os.path.join(os.path.split(fname)[0], fname_tot)
-
-        if os.path.exists(fname_tot):
-            os.remove(fname_tot)
-            print(
-                f"File '{fname_tot}' already exists, likely from a different run of motion correction. It will be overwritten.")
-
-        logging.info('Saving file as {}'.format(fname_tot))
-    else:
-        fname_tot = None
-
-    pars = []
-    for idx in idxs:
-        logging.debug('Processing: frames: {}'.format(idx))
-        pars.append([fname, fname_tot, np.array(idx), shape_mov, template, strides, overlaps, max_shifts, np.array(
-            add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-                     newoverlaps, newstrides, nonneg_movie, is_fiji, var_name_hdf5, indices, filter_kernel])
-
-    split_constant = load_split_heuristic(dims[0], dims[1], T)
-    res = tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
-    return fname_tot, res

@@ -7,7 +7,7 @@ import numpy as np
 import tifffile
 
 from jnormcorre import motion_correction
-
+from jnormcorre.utils import registrationarrays
 
 def get_shape(filename):
     import tifffile
@@ -56,7 +56,7 @@ patch_motion_um = (100., 100.),
 '''
 
 
-def motion_correct(filename,
+def motion_correct(lazy_dataset,
                    outdir,
                    max_shifts,
                    max_deviation_rigid=3,
@@ -64,14 +64,12 @@ def motion_correct(filename,
                    pw_rigid=True,
                    strides=(30, 30),
                    overlaps=(10, 10),
-                   niter_rig=4,
+                   niter_rig = 4,
                    gSig_filt=None,
                    save_movie=True,
                    sketch_template=False,
                    num_splits_to_process_els=None,
-                   num_splits_to_process_rig=None,
-                   min_mov=-5,
-                   indices=(slice(None), slice(None))):
+                   num_splits_to_process_rig=None):
     """
     Runs the full motion correction pipeline (with the option to do rigid and piecewise rigid registration after, if desired)
     Parameters
@@ -148,14 +146,11 @@ def motion_correct(filename,
 
     # Iteratively Run MC On Input File
     display("Running motion correction...")
-    target = verify_dataformats(filename)
 
-    total_frames_firstfile = get_shape(target[0])[2]
-    splits = math.ceil(total_frames_firstfile / frames_per_split)
+    total_frames = lazy_dataset.n_frames
+    splits = math.ceil(total_frames/frames_per_split)
     display("Number of chunks is {}".format(splits))
 
-    # max_shifts = [int(a/b) for a, b in zip(max_shift_um, dxy)]
-    # strides = tuple([int(a/b) for a, b in zip(patch_motion_um, dxy)])
 
     mc_dict['strides'] = strides
     mc_dict['overlaps'] = overlaps
@@ -168,7 +163,7 @@ def motion_correct(filename,
         mc_dict['overlaps'] = overlaps
     else:
         mc_dict['pw_rigid'] = False
-    mc_dict['niter_rig'] = 4
+    mc_dict['niter_rig'] = niter_rig
 
     if sketch_template:
         mc_dict['num_splits_to_process_els'] = min(5,
@@ -179,7 +174,7 @@ def motion_correct(filename,
     mc_dict['splits_els'] = splits
     mc_dict['splits_rig'] = splits
 
-    corrector = motion_correction.MotionCorrect(target, **mc_dict)
+    corrector = motion_correction.MotionCorrect(lazy_dataset, **mc_dict)
 
     # Run MC, Always Saving Non-Final Outputs For Use In Next Iteration
     corrector_obj, target_file = corrector.motion_correct(
@@ -201,6 +196,7 @@ def motion_correct(filename,
 def main():
     print("IN PYCHARM")
     filename = "../datasets/demoMovie.tif"
+    lazy_dataset = registrationarrays.TiffArray(filename)
 
     physical_params = True  # Turn this on or off based on how you want to set parameters and reason about your dataset
 
@@ -233,7 +229,7 @@ def main():
         strides = (30, 30)
         overlaps = (round(strides[0] / 4), round(strides[1] / 4))
 
-    registration_obj, registered_filename = motion_correct(filename, ".", max_shifts,
+    registration_obj, registered_filename = motion_correct(lazy_dataset, ".", max_shifts,
                                                            max_deviation_rigid=3,
                                                            frames_per_split=1000,
                                                            pw_rigid=pw_rigid,
@@ -244,9 +240,7 @@ def main():
                                                            save_movie=True,
                                                            sketch_template=False,
                                                            num_splits_to_process_els=None,
-                                                           num_splits_to_process_rig=None,
-                                                           min_mov=-5,
-                                                           indices=(slice(None), slice(None)))
+                                                           num_splits_to_process_rig=None)
 
 
 if __name__ == "__main__":
