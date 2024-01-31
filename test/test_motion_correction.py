@@ -236,7 +236,7 @@ class Test_mc:
     @pytest.mark.parametrize("n_frames", [25, 100])
     @pytest.mark.parametrize("pw_rigid", [True, False])
     @pytest.mark.parametrize("max_drift", [(1e-1), (1e-4, 1e-2), (1e-3, 1e-2), (1e-3, 1e-1)])
-    def test_registration_object(self, n_frames, pw_rigid, max_drift):
+    def test_frame_corrector(self, n_frames, pw_rigid, max_drift):
 
         frames, X, Y = (n_frames, self.X, self.Y)
         max_shift = int(min(X, Y) / 2) - 1
@@ -271,3 +271,37 @@ class Test_mc:
         registered_data = registration_object.register_frames(saved_dataset)
         #Verify that the registration object gives you the same results as the
         np.allclose(saved_dataset, registered_data), f"calculated shifts are to different from True value"
+
+    @pytest.mark.parametrize("n_frames", [25, 100])
+    @pytest.mark.parametrize("pw_rigid", [True, False])
+    @pytest.mark.parametrize("max_drift", [(1e-1), (1e-4, 1e-2), (1e-3, 1e-2), (1e-3, 1e-1)])
+    def test_registration_object(self, n_frames, pw_rigid, max_drift):
+
+        frames, X, Y = (n_frames, self.X, self.Y)
+        max_shift = int(min(X, Y) / 2) - 1
+
+        sim = SimData(frames=frames, X=X, Y=Y, n_blobs=10, noise_amplitude=0.2,
+                      blob_amplitude=5, max_drift=max_drift, max_jitter=1,
+                      background_noise=1, shot_noise=0.2)
+
+        data, shifts = sim.simulate()
+        assert np.max(shifts) < max_shift, f"simulated data deviates too much"
+
+        mc = MotionCorrect(data,
+                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
+                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           upsample_factor_grid=4, max_deviation_rigid=3,
+                           nonneg_movie=True, gSig_filt=None, min_mov=-1, niter_els=3)
+
+        # Perform motion correction
+        registration_obj, target_file = mc.motion_correct(save_movie=True)
+
+        saved_dataset = tifffile.imread(target_file).astype(np.float32)
+
+        registration_arr = jnormcorre.utils.registrationarrays.RegistrationArray(registration_obj, data)
+
+        num_frames = min(registration_arr.shape[0], 50)
+        registered_data = registration_arr[:num_frames, :, :]
+        #Verify that the registration object gives you the same results as the
+        np.allclose(saved_dataset[:num_frames, :, :], registered_data), f"calculated shifts are to different from True value"

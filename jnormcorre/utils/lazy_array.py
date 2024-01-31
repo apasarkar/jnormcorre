@@ -7,7 +7,7 @@ class lazy_data_loader(ABC):
     '''
     This captures the numpy array-like functionality that all data loaders for motion correction need to contain
 
-    Key: To implement support for a new file type, you just need to specify the key properties below (dtype, shape, n_frames, ndim)
+    Key: To implement support for a new file type, you just need to specify the key properties below (dtype, shape, ndim)
     and then implement the function _compute_at_indices.
     Adapted from mesmerize core: https://github.com/nel-lab/mesmerize-core/blob/master/mesmerize_core/arrays/_base.py
     '''
@@ -27,15 +27,6 @@ class lazy_data_loader(ABC):
         """
         Tuple[int]
             (n_frames, dims_x, dims_y)
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def n_frames(self) -> int:
-        """
-        int
-            number of frames
         """
         pass
 
@@ -85,12 +76,12 @@ class lazy_data_loader(ABC):
             step = indexer.step
 
             if start is not None:
-                if start > self.n_frames:
+                if start > self.shape[0]:
                     raise IndexError(f"Cannot index beyond `n_frames`.\n"
                                      f"Desired frame start index of <{start}> "
                                      f"lies beyond `n_frames` <{self.n_frames}>")
             if stop is not None:
-                if stop > self.n_frames:
+                if stop > self.shape[0]:
                     raise IndexError(f"Cannot index beyond `n_frames`.\n"
                                      f"Desired frame stop index of <{stop}> "
                                      f"lies beyond `n_frames` <{self.n_frames}>")
