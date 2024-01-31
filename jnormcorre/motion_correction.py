@@ -481,10 +481,10 @@ def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_t
                                                              nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
                                                              bigtiff=bigtiff)
 
+        new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
         if filter_kernel is not None:
             new_templ = high_pass_filter_cv(filter_kernel, new_templ)
-        else:
-            new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
+
 
     total_template = new_templ
     templates = []
