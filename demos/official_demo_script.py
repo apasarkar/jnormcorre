@@ -9,37 +9,6 @@ import tifffile
 from jnormcorre import motion_correction
 from jnormcorre.utils import registrationarrays
 
-def get_shape(filename):
-    import tifffile
-    with tifffile.TiffFile(filename) as tffl:
-        num_frames = len(tffl.pages)
-        for page in tffl.pages[0:1]:
-            image = page.asarray()
-            x, y = page.shape
-    return (x, y, num_frames)
-
-
-def verify_dataformats(filename):
-    '''
-    Function for checking the dataformat type so it can be seamlessly loaded by the rest of the pipeline.
-    Input:
-        filename: str. String describing the full filepath of the datafile
-    Returns:
-        file_output: list of strings. In this list, each string is a filename. These files, taken together, form the entire dataset
-    '''
-    _, extension = os.path.splitext(filename)[:2]
-    if extension in ['.tif', '.tiff', '.btf']:  # load tif file
-        with tifffile.TiffFile(filename) as tffl:
-            multi_page = True if tffl.series[0].shape[0] > 1 else False
-            if len(tffl.pages) == 1:
-                display(
-                    "Data is saved as single page tiff file. We will re-save data as sequence of smaller tifs to improve performance, but this will take time. To avoid this issue, save your data as multi-page tiff files")
-                raise ValueError(
-                    "Re-save your dataset as a multipage tiff file - single-page tiff files are too slow to load")
-
-    file_output = [filename]
-    return file_output
-
 def display(msg):
     """
     Printing utility that logs time and flushes.
