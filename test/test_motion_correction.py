@@ -264,7 +264,7 @@ class Test_mc:
             template = mc.total_template_els
         else:
             template = mc.total_template_rig
-        registration_object = jnormcorre.motion_correction.frame_corrector(template, mc.pw_rigid, mc.max_shifts,
+        registration_object = jnormcorre.motion_correction.frame_corrector(template, mc.max_shifts,
                                                                            mc.strides, mc.overlaps,
                                                                            mc.max_deviation_rigid, min_mov=mc.min_mov)
 

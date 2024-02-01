@@ -4,17 +4,18 @@
 import logging
 from builtins import range
 from builtins import str
-
-import cv2
 import jax
 import torch
 from past.utils import old_div
+from typing import *
+from jax.typing import ArrayLike
 
 logging.basicConfig(level=logging.ERROR)
 import numpy as np
 import tifffile
 from typing import List
 from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
+from jnormcorre.utils.lazy_array import lazy_data_loader
 from tqdm import tqdm
 import math
 import jax.numpy as jnp
@@ -23,35 +24,29 @@ from functools import partial
 import random
 
 
-### General object for motion correction
-## Use case: you have a good template (maybe you run registration on 10K frames, or you used a clever method to find a great template from data. Now you want to register lots of frames to this template. This object is a transparent way to use that functionality from this repo
 class frame_corrector():
-    def __init__(self, template, pw_rigid, max_shifts, strides, overlaps, max_deviation_rigid, min_mov = None, batching=100):
+    def __init__(self, template: np.ndarray,
+                 max_shifts: Tuple[int, int], strides: Tuple[int, int],
+                 overlaps: Tuple[int, int], max_deviation_rigid: int,
+                 min_mov: Optional[float] = None,
+                 batching: int = 100) -> None:
         """
-        Use Case: You have a good template, and you want to use the functionality from this codebase to align
-        (potentially unseen) frames to this data.
+        Standalone motion correction object, allowing users to register frames via rigid or piecewise
+        rigid motion correction to a given template.
 
-        Inputs:
-            template: np.ndarray. Shape (d1, d2) where d1 and d2 are the FOV dimensions
-            pw_rigid: Boolean. True if we want to do piecewise rigid registration
-            max_shifts: Tuple of two integers. Maximum rigid shift allowed when doing alignment
-            strides: Tuple of two integers.
-            Overlaps: Tuple of two integers.
-                As below, strides[0] + overlaps[0] and strides[1] + overlaps[1] are the patch size dimensions.
-            max_deviation_rigid. Integer. The maximum deviation between the rigid registration results and the template when doing
-                piecewise rigid registration.
+        Args:
+            template (np.ndarray): Shape (d1, d2) where d1 and d2 are the FOV dimensions
+            max_shifts (Tuple): Two integers, specifying maximum shift in the two FOV dimensions (height, width)
+            strides (Tuple): Two integers, used to specify patch dimensions for pwrigid registration
+            overlaps (Tuple): Overlap b/w patches. strides[i] + overlaps[i] are the patch size dimensions.
+            max_deviation_rigid (int): Specifies max number of pixels a patch can deviate from the rigid shifts.
+            min_mov (float). The minimum value of the movie, if known.
+            batching (int). Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
         """
         self.template = template
-
-
-        if pw_rigid:
-            self.corr_method = "pwrigid"
-        else:
-            self.corr_method = "rigid"
-
         self.max_shifts = max_shifts
+        self.upsample_factor_fft = 10
 
-        self.upsample_factor_fft = 10  ##NOTE: Hardcoded Value in original method
         if min_mov is not None:
             self.add_to_movie = -min_mov
         else:
@@ -62,41 +57,50 @@ class frame_corrector():
         self.max_deviation_rigid = max_deviation_rigid
         self.batching = batching
 
-        if self.corr_method == "pwrigid":
-            self.registration_method = jit(
+        #Set the pwrigid function
+        self.pw_registration_method = jit(
                 vmap(_register_to_template_pwrigid, in_axes=(0, None, None, None, None, None, None, None, None, None)),
                 static_argnums=(2, 3, 4, 5, 7))
+        def simplified_registration_func_pw(frames: np.ndarray) -> ArrayLike:
+            return self.pw_registration_method(frames, self.template, self.strides[0], self.strides[1],
+                                            self.overlaps[0], self.overlaps[1], self.max_shifts,
+                                            self.upsample_factor_fft, self.max_deviation_rigid, self.add_to_movie)[0]
 
-            def simplified_registration_func(frames):
-                return self.registration_method(frames, self.template, self.strides[0], self.strides[1], \
-                                                self.overlaps[0], self.overlaps[1], self.max_shifts,
-                                                self.upsample_factor_fft, \
-                                                self.max_deviation_rigid, self.add_to_movie)[0]
+        self.jitted_pwrigid_method = simplified_registration_func_pw
 
-            self.jitted_method = simplified_registration_func
+        #Set the rigid function
+        self.rigid_registration_method = jit(vmap(_register_to_template_rigid, in_axes=(0, None, None, None)))
+        def simplified_registration_func_rig(frames: np.ndarray) -> ArrayLike:
+            return self.rigid_registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
 
-        elif self.corr_method == "rigid":
-            self.registration_method = vmap(_register_to_template_rigid, in_axes=(0, None, None, None))
+        self.jitted_rigid_method = simplified_registration_func_rig
 
-            def simplified_registration_func(frames):
-                return self.registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
+    def register_frames(self, frames: np.ndarray, pw_rigid: bool=False) -> np.ndarray:
+        """
+        Function to register a set of frames to this object's template.
 
-            self.jitted_method = jit(simplified_registration_func)
+        Args:
+            frames (np.ndarray): dimensions (T, d1, d2), where T is the number of frames and d1, d2 are FOV dims
+            pwrigid (bool): Indicates whether we do piecewise rigid or rigid registration. Defaults to rigid.
+
+        Returns:
+            corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
+        """
+        if pw_rigid:
+            output = self.jitted_pwrigid_method(frames)
         else:
-            raise ValueError("Invalid method provided. Must either be pwrigid or rigid")
+            output = self.jitted_rigid_method(frames)
+        return np.array(output)
 
-    def register_frames(self, frames):
-        """
-        Inputs: 
-            frames: np.ndarray, dimensions (T, d1, d2), where T is the number of frames and d1, d2 are the FOV dimensions
-        Outputs: 
-            corrected_frames: jnp.array. Dimensions (T, d1, d2). The registered output from the input (frames)
-        
-        """
-        return self.jitted_method(frames)
+    @property
+    def rigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        return self.jitted_rigid_method
 
+    @property
+    def pwrigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        return self.jitted_pwrigid_method
 
-def verify_strides_and_overlaps(dim, stride, overlap):
+def verify_strides_and_overlaps(dim: int, stride: int, overlap: int) -> None:
     if not stride > 0:
         raise ValueError(
             "Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(
@@ -268,9 +272,9 @@ class MotionCorrect(object):
             template = self.total_template_els
         else:
             template = self.total_template_rig
-        frame_correction_obj = frame_corrector(template, self.pw_rigid, self.max_shifts,
-                                                                           self.strides, self.overlaps,
-                                                                           self.max_deviation_rigid, min_mov=self.min_mov)
+        frame_correction_obj = frame_corrector(template, self.max_shifts,
+                                               self.strides, self.overlaps,
+                                               self.max_deviation_rigid, min_mov=self.min_mov)
         return frame_correction_obj, self.target_file
 
     def motion_correct_rigid(self, template=None, save_movie=False) -> None:
@@ -441,7 +445,7 @@ def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_t
     T = lazy_dataset.shape[0]
     Ts = np.arange(T).shape[0]
     step = Ts // 50
-    corrected_slicer = slice(None, min(T-1, 4000), step + 1)  # Don't need too many frames to init the template
+    corrected_slicer = slice(None, min(T - 1, 4000), step + 1)  # Don't need too many frames to init the template
     m = lazy_dataset[corrected_slicer, :, :]
 
     # Initialize template by sampling frames uniformly throughout the movie and taking the median
@@ -484,7 +488,6 @@ def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_t
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
         if filter_kernel is not None:
             new_templ = high_pass_filter_cv(filter_kernel, new_templ)
-
 
     total_template = new_templ
     templates = []
@@ -804,6 +807,7 @@ def calculate_splits(T, splits) -> List:
         slice_list.append(slice(start, end))
         start = end
     return slice_list
+
 
 def load_split_heuristic(d1, d2, T):
     '''
@@ -1795,7 +1799,8 @@ def _register_to_template_1p_rigid(img, img_filtered, template, max_shifts, add_
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
 
-register_frames_to_template_1p_rigid = jit(vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, (None, None), None)))
+register_frames_to_template_1p_rigid = jit(
+    vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, (None, None), None)))
 
 
 # @partial(jit, static_argnums=(3,))
@@ -1855,7 +1860,8 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
 
 
 # @partial(jit, static_argnums=(3,4,5,6,8))
-def _register_to_template_1p_pwrigid(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
+def _register_to_template_1p_pwrigid(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1,
+                                     max_shifts,
                                      upsample_factor_fft, \
                                      max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
@@ -2059,9 +2065,11 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
     total_shifts = jnp.stack([shift_img_x_r, shift_img_x_y], axis=1) * -1
     return img, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts
 
+
 # Note that jax does not have higher-order spline implemented, eventually switch to that if it's actually the case that it leads to better outcomes
 # @partial(jit, static_argnums=(2,3,4,5,7))
-def _register_to_template_pwrigid(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
+def _register_to_template_pwrigid(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
+                                  upsample_factor_fft, \
                                   max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
