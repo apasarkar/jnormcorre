@@ -64,7 +64,7 @@ class frame_corrector():
 
         if self.corr_method == "pwrigid":
             self.registration_method = jit(
-                vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)),
+                vmap(_register_to_template_pwrigid, in_axes=(0, None, None, None, None, None, None, None, None, None)),
                 static_argnums=(2, 3, 4, 5, 7))
 
             def simplified_registration_func(frames):
@@ -76,7 +76,7 @@ class frame_corrector():
             self.jitted_method = simplified_registration_func
 
         elif self.corr_method == "rigid":
-            self.registration_method = vmap(tile_and_correct_rigid, in_axes=(0, None, None, None))
+            self.registration_method = vmap(_register_to_template_rigid, in_axes=(0, None, None, None))
 
             def simplified_registration_func(frames):
                 return self.registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
@@ -705,24 +705,24 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
 
             if max_deviation_rigid == 0:
                 if filter_kernel is None:
-                    outs = tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
+                    outs = register_frames_to_template_rigid(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
+                    outs = register_frames_to_template_1p_rigid(imgs, imgs_filtered, template, max_shifts, add_to_movie)
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
             else:
                 if filter_kernel is None:
-                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0],
-                                                         overlaps[1], \
-                                                         max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                         add_to_movie)
+                    outs = register_frames_to_template_pwrigid(imgs, template, strides[0], strides[1], overlaps[0],
+                                                               overlaps[1], \
+                                                               max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                               add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1],
-                                                            overlaps[0], overlaps[1], \
-                                                            max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                            add_to_movie)
+                    outs = register_frames_to_template_1p_pwrigid(imgs, imgs_filtered, template, strides[0], strides[1],
+                                                                  overlaps[0], overlaps[1], \
+                                                                  max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                                  add_to_movie)
 
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
@@ -1778,7 +1778,7 @@ def return_identity_mins(in_var, k):
 
 
 # @partial(jit, static_argnums=(4,))
-def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_movie):
+def _register_to_template_1p_rigid(img, img_filtered, template, max_shifts, add_to_movie):
     upsample_factor_fft = 10
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
     template = jnp.add(template, add_to_movie).astype(jnp.float32)
@@ -1795,11 +1795,11 @@ def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_mo
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
 
-tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, (None, None), None)))
+register_frames_to_template_1p_rigid = jit(vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, (None, None), None)))
 
 
 # @partial(jit, static_argnums=(3,))
-def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
+def _register_to_template_rigid(img, template, max_shifts, add_to_movie):
     upsample_factor_fft = 10
 
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
@@ -1814,7 +1814,7 @@ def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
 
-tile_and_correct_rigid_vmap = jit(vmap(tile_and_correct_rigid, in_axes=(0, None, None, None)))
+register_frames_to_template_rigid = jit(vmap(_register_to_template_rigid, in_axes=(0, None, None, None)))
 
 
 @partial(jit, static_argnums=(1, 2, 3, 4))
@@ -1855,9 +1855,9 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
 
 
 # @partial(jit, static_argnums=(3,4,5,6,8))
-def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
-                                upsample_factor_fft, \
-                                max_deviation_rigid, add_to_movie):
+def _register_to_template_1p_pwrigid(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
+                                     upsample_factor_fft, \
+                                     max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
@@ -1957,8 +1957,8 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     return m_reg - add_to_movie, total_shifts
 
 
-tile_and_correct_pwrigid_1p_vmap = jit(
-    vmap(tile_and_correct_pwrigid_1p, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
+register_frames_to_template_1p_pwrigid = jit(
+    vmap(_register_to_template_1p_pwrigid, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(3, 4, 5, 6, 8))
 
 
@@ -2059,24 +2059,10 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
     total_shifts = jnp.stack([shift_img_x_r, shift_img_x_y], axis=1) * -1
     return img, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts
 
-
-def opencv_interpolation(img, dims, shift_img_x, shift_img_y, x_grid, y_grid, add_value):
-    img = np.array(img)
-    shift_img_x = np.array(shift_img_x)
-    shift_img_y = np.array(shift_img_y)
-    x_grid = np.array(x_grid)
-    y_grid = np.array(y_grid)
-    m_reg = cv2.remap(img, cv2.resize(shift_img_y.astype(np.float32), dims[::-1]) + x_grid,
-                      cv2.resize(shift_img_x.astype(np.float32), dims[::-1]) + y_grid,
-                      cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-
-    return m_reg - add_value
-
-
 # Note that jax does not have higher-order spline implemented, eventually switch to that if it's actually the case that it leads to better outcomes
 # @partial(jit, static_argnums=(2,3,4,5,7))
-def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
-                           max_deviation_rigid, add_to_movie):
+def _register_to_template_pwrigid(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
+                                  max_deviation_rigid, add_to_movie):
     """ perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
@@ -2171,6 +2157,6 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     return m_reg - add_to_movie, total_shifts
 
 
-tile_and_correct_pwrigid_vmap = jit(
-    vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
+register_frames_to_template_pwrigid = jit(
+    vmap(_register_to_template_pwrigid, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(2, 3, 4, 5, 7))
