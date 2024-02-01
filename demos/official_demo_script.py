@@ -116,7 +116,7 @@ def motion_correct(lazy_dataset,
     # Iteratively Run MC On Input File
     display("Running motion correction...")
 
-    total_frames = lazy_dataset.n_frames
+    total_frames = lazy_dataset.shape[0]
     splits = math.ceil(total_frames/frames_per_split)
     display("Number of chunks is {}".format(splits))
 
@@ -163,7 +163,6 @@ def motion_correct(lazy_dataset,
     return corrector_obj, target_file
 
 def main():
-    print("IN PYCHARM")
     filename = "../datasets/demoMovie.tif"
     lazy_dataset = registrationarrays.TiffArray(filename)
 
