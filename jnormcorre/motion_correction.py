@@ -592,6 +592,10 @@ def _tile_and_correct_dataloader(param_list, lazy_dataset, split_constant=200, b
 
 
 class tile_and_correct_dataset():
+    """
+    Basic dataloading class for loading chunks of data. Written like this so that code can support prefetching from disk
+    """
+
     def __init__(self, param_list):
         self.param_list = param_list
 
@@ -599,7 +603,7 @@ class tile_and_correct_dataset():
         return len(self.param_list)
 
     def __getitem__(self, index):
-        lazy_dataset, out_fname, idxs,  template, strides, overlaps, max_shifts, \
+        lazy_dataset, out_fname, idxs, template, strides, overlaps, max_shifts, \
             add_to_movie, max_deviation_rigid, upsample_factor_grid, \
             filter_kernel = self.param_list[index]
 
@@ -611,7 +615,7 @@ class tile_and_correct_dataset():
             filter_kernel
 
 
-def generate_template_chunk(arr: np.ndarray, batch_size: int =250000) -> np.ndarray:
+def generate_template_chunk(arr: np.ndarray, batch_size: int = 250000) -> np.ndarray:
     dim_1_step = int(math.sqrt(batch_size))
     dim_2_step = int(math.sqrt(batch_size))
 
@@ -813,42 +817,8 @@ def _upsampled_dft_jax(data, upsampled_region_size,
 
 
 @partial(jit)
-def _upsampled_dft_jax_no_size(data, upsample_factor):
+def _upsampled_dft_jax_no_size(data: ArrayLike, upsample_factor: int) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
     Upsampled DFT by matrix multiplication.
 
     This code is intended to provide the same result as if the following
@@ -866,23 +836,11 @@ def _upsampled_dft_jax_no_size(data, upsample_factor):
     ``data.size * upsample_factor``.
 
     Args:
-        data : 2D array
-            The input data array (DFT of original data) to upsample.
-
-        upsampled_region_size : integer
-            The size of the region to be sampled.  If one integer is provided, it
-            is duplicated up to the dimensionality of ``data``.
-
-        upsample_factor : integer, optional
-            The upsampling factor.  Defaults to 1.
-
-        axis_offsets : tuple of integers, optional
-            The offsets of the region to be sampled.  Defaults to None (uses
-            image center)
+        data (np.ndarray). The input data array (DFT of original data) to upsample.
+        upsample_factor (int). Upsampling factor
 
     Returns:
-        output : 2D ndarray
-                The upsampled DFT of the specified region.
+        output (ArrayLike)
     """
 
     upsampled_region_size = 1
@@ -914,22 +872,24 @@ def _upsampled_dft_jax_no_size(data, upsample_factor):
     return output
 
 
-### CODE FOR REGISTER TRANSLATION FIRST CALL
-
 # @partial(jit)
-def _compute_phasediff(cross_correlation_max):
+def _compute_phasediff(cross_correlation_max: ArrayLike) -> ArrayLike:
     '''
     Compute global phase difference between the two images (should be zero if images are non-negative).
     Args:
-        cross_correlation_max : complex
-    The complex value of the cross correlation at its maximum point.
+        cross_correlation_max (complex)
+    Returns:
+        The complex value of the cross correlation at its maximum point.
     
     '''
     return jnp.angle(cross_correlation_max)
 
 
 # @partial(jit)
-def get_freq_comps_jax(src_image, target_image):
+def get_freq_comps_jax(src_image: ArrayLike, target_image: ArrayLike) -> tuple[ArrayLike]:
+    """
+    Routine to compute frequency components of two images
+    """
     src_image_cpx = jnp.complex64(src_image)
     target_image_cpx = jnp.complex64(target_image)
     src_freq = jnp.fft.fftn(src_image_cpx)
@@ -940,7 +900,7 @@ def get_freq_comps_jax(src_image, target_image):
 
 
 # @partial(jit)
-def threshold_dim1(img, ind):
+def threshold_dim1(img: ArrayLike, ind: int) -> ArrayLike:
     a = img.shape[0]
 
     row_ind_first = jnp.arange(a) < ind
@@ -953,7 +913,7 @@ def threshold_dim1(img, ind):
 
 
 # @partial(jit)
-def threshold_dim2(img, ind):
+def threshold_dim2(img: ArrayLike, ind: int) ->ArrayLike:
     b = img.shape[1]
 
     col_ind_first = jnp.arange(b) < ind
@@ -976,97 +936,25 @@ def return_identity(a, b):
 
 
 # @partial(jit, static_argnums=(2,))
-def register_translation_jax_simple(src_image, target_image, upsample_factor, max_shifts=(10, 10)):
+def register_translation_jax_simple(src_image: ArrayLike, target_image: ArrayLike,
+                                    upsample_factor: int,
+                                    max_shifts: tuple[int, int]=(10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
-
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-    Efficient subpixel image translation registration by cross-correlation.
-
-    This code gives the same precision as the FFT upsampled cross-correlation
-    in a fraction of the computation time and with reduced memory requirements.
-    It obtains an initial estimate of the cross-correlation peak by an FFT and
-    then refines the shift estimation by upsampling the DFT only in a small
-    neighborhood of that estimate by means of a matrix-multiply DFT.
+    Finds optimal rigid shifts to register target_image (template) with src_image (input image). Negate
+        these shifts to get the optimal rigid transformation from src_image to template.
 
     Args:
-        src_image : ndarray
-            Reference image.
-
-        target_image : ndarray
-            Image to register.  Must be same dimensionality as ``src_image``.
-
-        upsample_factor : int, optional
-            Upsampling factor. Images will be registered to within
-            ``1 / upsample_factor`` of a pixel. For example
-            ``upsample_factor == 20`` means the images will be registered
-            within 1/20th of a pixel.  Default is 1 (no upsampling)
-
-        space : string, one of "real" or "fourier"
-            Defines how the algorithm interprets input data.  "real" means data
-            will be FFT'd to compute the correlation, while "fourier" data will
-            bypass FFT of input data.  Case insensitive.
+        src_image (np.ndarray). Input image
+        target_image (np.ndarray). Template. Must be same dimensionality as src_image
+        upsample_factor (int). Images will be registered to within 1 / upsample_factor of a pixel.
+        max_shifts (tuple). Tuple of two integers describing maximum rigid shift in each dimension
 
     Returns:
-        shifts : ndarray
-            Shift vector (in pixels) required to register ``target_image`` with
+        shifts (ndarray). Shift vector (in pixels) required to register ``target_image`` with
             ``src_image``.  Axis ordering is consistent with numpy (e.g. Z, Y, X)
-
-        error : float
-            Translation invariant normalized RMS error between ``src_image`` and
-            ``target_image``.
-
-        phasediff : float
-            Global phase difference between the two images (should be
+        sfr_freq (jnp.array). Frequency domain representation of src_image.
+        phasediff (jnp.array). Global phase difference between the two images (should be
             zero if images are non-negative).
-
-    Raises:
-     NotImplementedError "Error: register_translation only supports "
-                                  "subpixel registration for 2D images"
-
-     ValueError "Error: images must really be same size for "
-                         "register_translation"
-
-     ValueError "Error: register_translation only knows the \"real\" "
-                         "and \"fourier\" values for the ``space`` argument."
-
-    References:
-    .. [1] Manuel Guizar-Sicairos, Samuel T. Thurman, and James R. Fienup,
-           "Efficient subpixel image registration algorithms,"
-           Optics Letters 33, 156-158 (2008).
     """
 
     ##Now, must FFT the data:
@@ -1123,50 +1011,10 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     shifts = shifts * shape_new
     return shifts, src_freq, _compute_phasediff(CCmax)
 
-
-### END OF CODE FOR REGISTER TRANSLATION FIRST CALL
-
-
-### START OF CODE FOR REGISTER TRANSLATION SECOND CALL
-
 # @partial(jit, static_argnums=(1,))
-def _upsampled_dft_jax_full(data, upsampled_region_size,
-                            upsample_factor, axis_offsets):
+def _upsampled_dft_jax_full(data: ArrayLike, upsampled_region_size: int,
+                            upsample_factor: int, axis_offsets: tuple[ArrayLike, ArrayLike]) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
     Upsampled DFT by matrix multiplication.
 
     This code is intended to provide the same result as if the following
@@ -1184,23 +1032,13 @@ def _upsampled_dft_jax_full(data, upsampled_region_size,
     ``data.size * upsample_factor``.
 
     Args:
-        data : 2D array
+        data (np.ndarray):
             The input data array (DFT of original data) to upsample.
-
-        upsampled_region_size : integer
-            The size of the region to be sampled.  If one integer is provided, it
-            is duplicated up to the dimensionality of ``data``.
-
-        upsample_factor : integer, optional
-            The upsampling factor.  Defaults to 1.
-
-        axis_offsets : tuple of integers, optional
-            The offsets of the region to be sampled.  Defaults to None (uses
-            image center)
-
+        upsampled_region_size (integer). The size of the region to be sampled
+        upsample_factor (int). The upsampling factor for registration.
+        axis_offsets (tuple). Offsets from the image to be sampled.
     Returns:
-        output : 2D ndarray
-                The upsampled DFT of the specified region.
+        output (jnp.ndarray). The upsampled DFT of the specified region.
     """
 
     # Calculate col_kernel
@@ -1208,7 +1046,6 @@ def _upsampled_dft_jax_full(data, upsampled_region_size,
     shifted = jnp.fft.ifftshift(jnp.arange(data.shape[1]))
     shifted = jnp.expand_dims(shifted, axis=1)
 
-    # ifftshift(np.arange(data.shape[1]))[:, None] - np.floor(old_div(data.shape[1], 2))
     term_A = shifted - jnp.floor(data.shape[1] / 2)
 
     term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis=0) - axis_offsets[1]
@@ -1291,98 +1128,25 @@ def threshold_shifts_1_else(new_cross_corr, shift_ub, shift_lb):
 
 
 # @partial(jit, static_argnums=(2,))
-def register_translation_jax_full(src_image, target_image, upsample_factor, \
-                                  shifts_lb, shifts_ub, max_shifts=(10, 10)):
+def register_translation_jax_full(src_image: ArrayLike, target_image: ArrayLike, upsample_factor: int, \
+                                  shifts_lb: ArrayLike,
+                                  shifts_ub: ArrayLike, max_shifts=(10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
-
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-    Efficient subpixel image translation registration by cross-correlation.
-
-    This code gives the same precision as the FFT upsampled cross-correlation
-    in a fraction of the computation time and with reduced memory requirements.
-    It obtains an initial estimate of the cross-correlation peak by an FFT and
-    then refines the shift estimation by upsampling the DFT only in a small
-    neighborhood of that estimate by means of a matrix-multiply DFT.
-
+    Estimates piecewise rigid shifts which would align target_image TO the src_image. Negate these to get shifts going
+    from src_image to target.
     Args:
-        src_image : ndarray
-            Reference image.
-
-        target_image : ndarray
-            Image to register.  Must be same dimensionality as ``src_image``.
-
-        upsample_factor : int, optional
-            Upsampling factor. Images will be registered to within
-            ``1 / upsample_factor`` of a pixel. For example
-            ``upsample_factor == 20`` means the images will be registered
-            within 1/20th of a pixel.  Default is 1 (no upsampling)
-
-        space : string, one of "real" or "fourier"
-            Defines how the algorithm interprets input data.  "real" means data
-            will be FFT'd to compute the correlation, while "fourier" data will
-            bypass FFT of input data.  Case insensitive.
+        src_image (np.ndarray). Input data/images.
+        target_image (np.ndarray). Template. Must have same shape as src_image.
+        upsample_factor (int). Upsampling which occurs to estimate the shifts
+        shifts_lb (ArrayLike). Lower bound on the shifts which can be applied at each subpatch.
+        shifts_ub (ArrayLike). Upper bound on the shifts which can be applied at each subpatch.
 
     Returns:
-        shifts : ndarray
-            Shift vector (in pixels) required to register ``target_image`` with
-            ``src_image``.  Axis ordering is consistent with numpy (e.g. Z, Y, X)
-
-        error : float
-            Translation invariant normalized RMS error between ``src_image`` and
-            ``target_image``.
-
-        phasediff : float
-            Global phase difference between the two images (should be
+        shifts (np.ndarray). Shift vector (in pixels) required to register ``target_image`` with
+            ``src_image``.
+        src_freq (jnp.array). Frequency domain representation of input image data.
+        phasediff (jnp.array). Float value, global phase difference between the two images (should be
             zero if images are non-negative).
-
-    Raises:
-     NotImplementedError "Error: register_translation only supports "
-                                  "subpixel registration for 2D images"
-
-     ValueError "Error: images must really be same size for "
-                         "register_translation"
-
-     ValueError "Error: register_translation only knows the \"real\" "
-                         "and \"fourier\" values for the ``space`` argument."
-
-    References:
-    .. [1] Manuel Guizar-Sicairos, Samuel T. Thurman, and James R. Fienup,
-           "Efficient subpixel image registration algorithms,"
-           Optics Letters 33, 156-158 (2008).
     """
 
     ##Now, must FFT the data:
@@ -1451,17 +1215,11 @@ def register_translation_jax_full(src_image, target_image, upsample_factor, \
 
 vmap_register_translation = vmap(register_translation_jax_full, in_axes=(0, 0, None, None, None, None))
 
-
-#########
-### apply_shifts function + helper code
-########
-
 @partial(jit)
 def update_src_freq_jax(src_freq):
     out = jnp.fft.fftn(src_freq)
     out_norm = jnp.divide(out, jnp.size(out))
     return jnp.complex128(out_norm)
-
 
 @partial(jit)
 def update_src_freq_identity(src_freq):
@@ -1494,49 +1252,18 @@ def floor_min(a, b):
 
 
 # @partial(jit)
-def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
+def apply_shifts_dft_fast_1(src_freq_in: ArrayLike, shift_a: ArrayLike,
+                            shift_b: ArrayLike, diffphase: ArrayLike) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
+    use the inverse dft to apply shifts
     Args:
-        apply shifts using inverse dft
-        src_freq: ndarray
-            if is_freq it is fourier transform image else original image
-        shifts: shifts to apply
-        diffphase: comes from the register_translation output
+        src_freq_in (jnp.array). Frequency domain representatio of an image
+        shift_a (jnp.array). One element, describing shift in dimension 1
+        shift_b (jnp.array). One element, describing shift in dimension 2
+        diffphase (jnp.array). Global phase difference; see register translation functions
+
+    Returns:
+        Shifted image
     """
 
     src_freq = jnp.complex64(src_freq_in)
@@ -1630,7 +1357,12 @@ def return_identity_mins(in_var, k):
 
 
 # @partial(jit, static_argnums=(4,))
-def _register_to_template_1p_rigid(img, img_filtered, template, max_shifts, add_to_movie):
+def _register_to_template_1p_rigid(img: ArrayLike, img_filtered: ArrayLike, template: ArrayLike,
+                                   max_shifts: tuple[int, int], add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Same as _register_to_template_rigid; only difference is that we align img_filtered (the
+    high-pass thresholded movie) to template, but we apply the compute shifts and apply those shifts to img.
+    """
     upsample_factor_fft = 10
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
     template = jnp.add(template, add_to_movie).astype(jnp.float32)
@@ -1652,7 +1384,21 @@ register_frames_to_template_1p_rigid = jit(
 
 
 # @partial(jit, static_argnums=(3,))
-def _register_to_template_rigid(img, template, max_shifts, add_to_movie):
+def _register_to_template_rigid(img: ArrayLike, template: ArrayLike,
+                                max_shifts: ArrayLike, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Registers img to template, subject to constraint that max shift in either FOV dimension is bounded by values in
+    max_shifts.
+
+    Args:
+        img (jnp.array). Input image of interest.
+        template (jnp.array). Template image
+        max_shifts (jnp.array). Has 2 integers specifying max shift in both FOV dimensions
+        add_to_movie (jnp.array). Scalar value in jnp.array for adding to each frame.
+    Returns:
+        aligned: Aligned version of "img" to template.
+        shifts: Shifts which were applied to img.
+    """
     upsample_factor_fft = 10
 
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
@@ -1708,53 +1454,16 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
 
 
 # @partial(jit, static_argnums=(3,4,5,6,8))
-def _register_to_template_1p_pwrigid(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1,
-                                     max_shifts,
-                                     upsample_factor_fft, \
-                                     max_deviation_rigid, add_to_movie):
-    """ perform piecewise rigid motion correction iteration, by
-        1) dividing the FOV in patches
-        2) motion correcting each patch separately
-        3) upsampling the motion correction vector field
-        4) stiching back together the corrected subpatches
-
-    Args:
-        img: ndaarray 2D
-            image to correct
-
-        template: ndarray
-            reference image
-
-        strides: tuple
-            strides of the patches in which the FOV is subdivided
-
-        overlaps: tuple
-            amount of pixel overlaping between patches along each dimension
-
-        max_shifts: tuple
-            max shifts in x and y
-
-        upsample_factor_grid: int
-            if newshapes is not specified this is inferred upsampling by a constant factor the cvector field
-
-        upsample_factor_fft: int
-            resolution of fractional shifts
-
-        show_movie: boolean whether to visualize the original and corrected frame during motion correction
-
-        max_deviation_rigid: int
-            maximum deviation in shifts of each patch from the rigid shift (should not be large)
-
-        add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
-
-        filt_sig_size: tuple
-            standard deviation and size of gaussian filter to center filter data in case of one photon imaging data
-
-    Returns:
-        (new_img, total_shifts, start_step, xy_grid)
-            new_img: ndarray, corrected image
-
-
+def _register_to_template_1p_pwrigid(img: ArrayLike, img_filtered: ArrayLike,
+                                     template: ArrayLike, strides_0: int, strides_1: int, overlaps_0: int,
+                                     overlaps_1: int,
+                                     max_shifts: ArrayLike,
+                                     upsample_factor_fft: int,
+                                     max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    This is the same as _register_to_template_pwrigid; the only difference is that there is an extra
+    parameter, img_filtered, which is a high-pass thresholded version of img. We align that to template, and
+    apply the shifts to image to do the alignment. See _register_to_template_pwrigid for parameter info.
     """
     strides = [strides_0, strides_1]
     overlaps = [overlaps_0, overlaps_1]
@@ -1815,147 +1524,33 @@ register_frames_to_template_1p_pwrigid = jit(
     vmap(_register_to_template_1p_pwrigid, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(3, 4, 5, 6, 8))
 
-
-@partial(jit, static_argnums=(2, 3, 4, 5, 7))
-def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
-                     max_deviation_rigid, add_to_movie):
-    """ perform piecewise rigid motion correction iteration, by
-        1) dividing the FOV in patches
-        2) motion correcting each patch separately
-        3) upsampling the motion correction vector field
-        4) stiching back together the corrected subpatches
-
-    Args:
-        img: ndaarray 2D
-            image to correct
-
-        template: ndarray
-            reference image
-
-        strides: tuple
-            strides of the patches in which the FOV is subdivided
-
-        overlaps: tuple
-            amount of pixel overlaping between patches along each dimension
-
-        max_shifts: tuple
-            max shifts in x and y
-
-        upsample_factor_grid: int
-            if newshapes is not specified this is inferred upsampling by a constant factor the cvector field
-
-        upsample_factor_fft: int
-            resolution of fractional shifts
-
-        show_movie: boolean whether to visualize the original and corrected frame during motion correction
-
-        max_deviation_rigid: int
-            maximum deviation in shifts of each patch from the rigid shift (should not be large)
-
-        add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
-
-        filt_sig_size: tuple
-            standard deviation and size of gaussian filter to center filter data in case of one photon imaging data
-
-    Returns:
-        (new_img, total_shifts, start_step, xy_grid)
-            new_img: ndarray, corrected image
-
-
-    """
-    strides = [strides_0, strides_1]
-    overlaps = [overlaps_0, overlaps_1]
-
-    img = jnp.array(img).astype(jnp.float32)
-    template = jnp.array(template).astype(jnp.float32)
-
-    img = img + add_to_movie
-    template = template + add_to_movie
-
-    # compute rigid shifts
-    rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
-        img, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
-
-    # extract patches
-
-    templates = get_patches_jax(template, overlaps[0], overlaps[1], strides[0], strides[1])
-    xy_grid = get_xy_grid(template, overlaps[0], overlaps[1], strides[0], strides[1])
-    imgs = get_patches_jax(img, overlaps[0], overlaps[1], strides[0], strides[1])
-    sum_0 = img.shape[0] - strides_0 - overlaps_0
-    sum_1 = img.shape[1] - strides_1 - overlaps_1
-    comp_a = sum_0 // strides_0 + 1 + (sum_0 % strides_0 > 0)
-    comp_b = sum_1 // strides_1 + 1 + (sum_1 % strides_1 > 0)
-    dim_grid = [comp_a, comp_b]
-    num_tiles = comp_a * comp_b
-
-    lb_shifts = jnp.ceil(jnp.subtract(
-        rigid_shts, max_deviation_rigid)).astype(jnp.int16)
-    ub_shifts = jnp.floor(
-        jnp.add(rigid_shts, max_deviation_rigid)).astype(jnp.int16)
-
-    # extract shifts for each patch
-    src_image_inputs = jnp.array(imgs)
-    target_image_inputs = jnp.array(templates)
-    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts,
-                                             ub_shifts, max_shifts)
-
-    shift_img_y = jnp.reshape(jnp.array(shfts_et_all[0])[:, 1], dim_grid)
-    shift_img_x = jnp.reshape(jnp.array(shfts_et_all[0])[:, 0], dim_grid)
-    diffs_phase_grid = jnp.reshape(jnp.array(shfts_et_all[2]), dim_grid)
-
-    dims = img.shape
-
-    x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
-        jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
-
-    shift_img_x_r = shift_img_x.reshape(num_tiles)
-    shift_img_x_y = shift_img_y.reshape(num_tiles)
-    total_shifts = jnp.stack([shift_img_x_r, shift_img_x_y], axis=1) * -1
-    return img, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts
-
-
-# Note that jax does not have higher-order spline implemented, eventually switch to that if it's actually the case that it leads to better outcomes
 # @partial(jit, static_argnums=(2,3,4,5,7))
-def _register_to_template_pwrigid(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
-                                  upsample_factor_fft, \
-                                  max_deviation_rigid, add_to_movie):
-    """ perform piecewise rigid motion correction iteration, by
+def _register_to_template_pwrigid(img: ArrayLike, template: ArrayLike, strides_0: int, strides_1: int,
+                                  overlaps_0: int, overlaps_1: int, max_shifts: ArrayLike,
+                                  upsample_factor_fft: int,
+                                  max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
         3) upsampling the motion correction vector field
         4) stiching back together the corrected subpatches
 
     Args:
-        img: ndaarray 2D
-            image to correct
-
-        template: ndarray
-            reference image
-
-        strides: tuple
-            strides of the patches in which the FOV is subdivided
-
-        overlaps: tuple
-            amount of pixel overlaping between patches along each dimension
-
-        max_shifts: tuple
-            max shifts in x and y
-
-        upsample_factor_grid: int
-            if newshapes or newstrides are not specified this is inferred upsampling by a constant factor the cvector field
-
-        upsample_factor_fft: int
-            resolution of fractional shifts
-
-        max_deviation_rigid: int
-            maximum deviation in shifts of each patch from the rigid shift (should not be large)
-
-        add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
+        img (np.ndarray). image to correct
+        template (np.ndarray). The reference image
+        strides_0 (int). The strides of the patches in which the FOV is subdivided along dimension 0.
+        strides_1 (int). The strides of the patches in which the FOV is subdivided along dimension 1.
+        overlaps_0 (int). Tmount of pixel overlap between patches along dimension 0
+        overlaps_1 (int). Tmount of pixel overlap between patches along dimension 1
+        max_shifts (tuple). Max shifts in x and y
+        upsample_factor_fft (int). The resolution of fractional shifts
+        max_deviation_rigid (int). Maximum deviation in shifts of each patch from the rigid shift (should not be large)
+        add_to_movie (jnp.array). Constant offset to add to movie before registration to avoid negative values.
 
     Returns:
-        (new_img, total_shifts, start_step, xy_grid)
-            new_img: ndarray, corrected image
-
+        new_img (jnp,array). Registered movie
+        total_shifts (jnp.array). Shifts applied to each patch.
 
     """
     strides = [strides_0, strides_1]
