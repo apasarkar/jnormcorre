@@ -109,10 +109,6 @@ def motion_correct_pipeline(lazy_dataset: lazy_data_loader,
     # Iteratively Run MC On Input File
     display("Running motion correction...")
 
-    total_frames = lazy_dataset.shape[0]
-    splits = math.ceil(total_frames / frames_per_split)
-    display("Number of chunks is {}".format(splits))
-
     mc_dict['strides'] = strides
     mc_dict['overlaps'] = overlaps
     mc_dict['max_shifts'] = max_shifts
@@ -126,11 +122,10 @@ def motion_correct_pipeline(lazy_dataset: lazy_data_loader,
         mc_dict['pw_rigid'] = False
     mc_dict['niter_rig'] = niter_rig
 
-    mc_dict['num_splits_to_process_els'] = min(num_splits_to_process_els, splits)
-    mc_dict['num_splits_to_process_rig'] = min(num_splits_to_process_rig, splits)
+    mc_dict['num_splits_to_process_els'] = num_splits_to_process_els
+    mc_dict['num_splits_to_process_rig'] = num_splits_to_process_rig
     mc_dict['gSig_filt'] = gSig_filt
-    mc_dict['splits_els'] = splits
-    mc_dict['splits_rig'] = splits
+    mc_dict['frames_per_split'] = frames_per_split
 
     corrector = motion_correction.MotionCorrect(lazy_dataset, **mc_dict)
 
@@ -195,7 +190,6 @@ def main():
                                                                     overlaps=overlaps, niter_rig=4, gSig_filt=None,
                                                                     save_movie=True
                                                                     )
-
 
 if __name__ == "__main__":
     main()

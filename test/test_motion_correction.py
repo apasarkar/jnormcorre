@@ -89,7 +89,7 @@ class Test_mc:
 
             mc = MotionCorrect(lazy_dataset,
                                max_shifts=(6, 6), niter_rig=4, max_deviation_rigid=3,
-                               upsample_factor_grid=4, strides=(50, 50), splits_rig=5, splits_els=5, gSig_filt=None,
+                               upsample_factor_grid=4, strides=(50, 50), frames_per_split=1000, gSig_filt=None,
                                num_splits_to_process_els=5, num_splits_to_process_rig=5, pw_rigid=True,
                                overlaps=(10, 10), min_mov=-5, niter_els=1)
 
@@ -100,15 +100,14 @@ class Test_mc:
     @pytest.mark.parametrize("max_shifts", [(6, 6), (39, 39)])
     @pytest.mark.parametrize("num_splits_to_process_rig", [5])
     @pytest.mark.parametrize("num_splits_to_process_els", [5])
-    @pytest.mark.parametrize("splits_els", [5])
-    @pytest.mark.parametrize("splits_rig", [5])
+    @pytest.mark.parametrize("frames_per_split", [100, 1000])
     @pytest.mark.parametrize("gSig_filt", [None, (10, 10)])
     @pytest.mark.parametrize("overlaps", [(10, 10), (24, 24)])
     @pytest.mark.parametrize("pw_rigid", [True, False])
     @pytest.mark.parametrize("min_mov", [None, -5, 5])
     @pytest.mark.parametrize("niter_els", [1, 3])
     def test_parameters(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
-                        gSig_filt, overlaps, pw_rigid, splits_els, splits_rig, min_mov, niter_els,
+                        gSig_filt, overlaps, pw_rigid, frames_per_split, min_mov, niter_els,
                         niter_rig=4, max_deviation_rigid=3, upsample_factor_grid=4,
                         strides=(50, 50)):
 
@@ -116,9 +115,9 @@ class Test_mc:
 
         # Create MotionCorrect instance
         mc = MotionCorrect(input_,
-                           max_shifts=max_shifts, niter_rig=niter_rig, splits_rig=splits_rig,
+                           max_shifts=max_shifts, niter_rig=niter_rig, frames_per_split=frames_per_split,
                            num_splits_to_process_rig=num_splits_to_process_rig, strides=strides, overlaps=overlaps,
-                           pw_rigid=pw_rigid, splits_els=splits_els,
+                           pw_rigid=pw_rigid,
                            num_splits_to_process_els=num_splits_to_process_els,
                            upsample_factor_grid=upsample_factor_grid, max_deviation_rigid=max_deviation_rigid,
                            gSig_filt=gSig_filt,
@@ -140,9 +139,9 @@ class Test_mc:
 
         # Create MotionCorrect instance
         mc = MotionCorrect(input_,
-                           max_shifts=(6, 6), niter_rig=4, splits_rig=5,
+                           max_shifts=(6, 6), niter_rig=4, frames_per_split=500,
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                           pw_rigid=pw_rigid, splits_els=splits_els,
+                           pw_rigid=pw_rigid,
                            num_splits_to_process_els=num_splits_to_process_els,
                            upsample_factor_grid=4, max_deviation_rigid=3,
                            gSig_filt=None, min_mov=-1, niter_els=niter_els)
@@ -151,17 +150,17 @@ class Test_mc:
         mc.motion_correct(save_movie=True)
 
     @pytest.mark.parametrize("num_splits_to_process_rig", [5, 10])
-    @pytest.mark.parametrize("splits_rig", [5, 10])
+    @pytest.mark.parametrize("frames_per_split", [500, 1000])
     @pytest.mark.parametrize("niter_els", [1, 3])
-    def test_rig_split(self, num_splits_to_process_rig, splits_rig, niter_els, pw_rigid=True):
+    def test_rig_split(self, num_splits_to_process_rig, frames_per_split, niter_els, pw_rigid=True):
 
         input_, shifts = self.data, self.shifts
 
         # Create MotionCorrect instance
         mc = MotionCorrect(input_,
-                           max_shifts=(6, 6), niter_rig=4, splits_rig=splits_rig,
+                           max_shifts=(6, 6), niter_rig=4, frames_per_split=frames_per_split,
                            num_splits_to_process_rig=num_splits_to_process_rig, strides=(50, 50), overlaps=(10, 10),
-                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
                            gSig_filt=None, min_mov=-1, niter_els=niter_els)
 
@@ -187,9 +186,9 @@ class Test_mc:
         # Create MotionCorrect instance
 
         mc = MotionCorrect(data,
-                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           max_shifts=(max_shift, max_shift), niter_rig=4, frames_per_split=1000,
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
                            gSig_filt=None, min_mov=-1, niter_els=3)
 
@@ -220,9 +219,9 @@ class Test_mc:
         # Create MotionCorrect instance
 
         mc = MotionCorrect(data,
-                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           max_shifts=(max_shift, max_shift), niter_rig=4, frames_per_split=1000,
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
                            gSig_filt=None, min_mov=-1, niter_els=3)
 
@@ -249,9 +248,9 @@ class Test_mc:
         assert np.max(shifts) < max_shift, f"simulated data deviates too much"
 
         mc = MotionCorrect(data,
-                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           max_shifts=(max_shift, max_shift), niter_rig=4, frames_per_split=1000,
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
                            gSig_filt=None, min_mov=-1, niter_els=3)
 
@@ -288,9 +287,9 @@ class Test_mc:
         assert np.max(shifts) < max_shift, f"simulated data deviates too much"
 
         mc = MotionCorrect(data,
-                           max_shifts=(max_shift, max_shift), niter_rig=4, splits_rig=5,
+                           max_shifts=(max_shift, max_shift), niter_rig=4, frames_per_split=1000,
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
-                           pw_rigid=pw_rigid, splits_els=5, num_splits_to_process_els=5,
+                           pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
                            gSig_filt=None, min_mov=-1, niter_els=3)
 

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import datetime
 from builtins import range
 from builtins import str
 import jax
@@ -128,15 +129,16 @@ def verify_strides_and_overlaps(dim: int, stride: int, overlap: int) -> None:
             "The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(
                 stride, overlap, dim))
 
+
 class MotionCorrect(object):
     """
     class implementing motion correction operations
     """
 
-    def __init__(self, lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int] = (6, 6), splits_rig: int = 14,
-                 num_splits_to_process_rig: Optional[int] = None, niter_rig: int = 1, pw_rigid: bool = False,
-                 strides: tuple[int, int] = (96, 96), overlaps: tuple[int, int] = (32, 32),
-                 max_deviation_rigid: int = 3, splits_els: int = 14, num_splits_to_process_els: Optional[int] = None,
+    def __init__(self, lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int] = (6, 6),
+                 frames_per_split: int = 1000, num_splits_to_process_rig: Optional[int] = None, niter_rig: int = 1,
+                 pw_rigid: bool = False, strides: tuple[int, int] = (96, 96), overlaps: tuple[int, int] = (32, 32),
+                 max_deviation_rigid: int = 3, num_splits_to_process_els: Optional[int] = None,
                  niter_els: int = 1, min_mov: float = None, upsample_factor_grid: int = 4,
                  gSig_filt: Optional[list[int]] = None, bigtiff: bool = False) -> None:
 
@@ -146,14 +148,13 @@ class MotionCorrect(object):
         Args:
             lazy_dataset (lazy_data_loader): Lazy data loader for loading frames of the data
             max_shifts (Tuple): Two integers, specifying maximum shift in the two FOV dimensions (height, width)
-            splits_rig (int). Number of frames we split the movie into to get local templates for rigid registration
+            frames_per_split (int): Integer larger than 1. Number of frames we use to generate each local template.
             num_splits_to_process_rig (int): Number of splits we process per iteration of rigid motion correction
             niter_rig (int): Number of iterations of rigid motion correction
             pw_rigid (bool): Whether we additionally run piecewise rigid registration
             strides (Tuple): Two integers, used to specify patch dimensions for pwrigid registration
             overlaps (Tuple): Overlap b/w patches. strides[i] + overlaps[i] are the patch size dimensions.
             max_deviation_rigid (int): Specifies max number of pixels a patch can deviate from the rigid shifts.
-            splits_els (int): Number of frames we split the movie into to get local templates for rigid registration
             num_splits_to_process_els (int): Number of splits we process per iteration of pwrigid motion correction
             niter_els: Number of iterations of piecewise rigid registration
             min_mov (float). The minimum value of the movie, if known
@@ -171,11 +172,10 @@ class MotionCorrect(object):
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
         self.niter_els = niter_els
-        self.splits_rig = splits_rig
+        self.frames_per_split = frames_per_split
         self.num_splits_to_process_rig = num_splits_to_process_rig
         self.strides = strides
         self.overlaps = overlaps
-        self.splits_els = splits_els
         self.num_splits_to_process_els = num_splits_to_process_els
         self.upsample_factor_grid = upsample_factor_grid
         self.max_deviation_rigid = max_deviation_rigid
@@ -242,7 +242,7 @@ class MotionCorrect(object):
         return frame_correction_obj, self.target_file
 
     def _motion_correct_rigid(self, template: Optional[np.ndarray] = None,
-                       save_movie: Optional[bool] = False) -> None:
+                              save_movie: Optional[bool] = False) -> None:
         """
         Perform rigid motion correction
 
@@ -258,7 +258,7 @@ class MotionCorrect(object):
         _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = _motion_correct_batch_rigid(
             self.lazy_dataset,
             self.max_shifts,
-            splits=self.splits_rig,
+            frames_per_split=self.frames_per_split,
             num_splits_to_process=self.num_splits_to_process_rig,
             num_iter=self.niter_rig,
             template=self.total_template_rig,
@@ -297,15 +297,12 @@ class MotionCorrect(object):
 
         self.coord_shifts_els: List = []
 
-        _fname_tot_els, new_template_els, _templates_els, \
-            _x_shifts_els, _y_shifts_els, _z_shifts_els, _coord_shifts_els = _motion_correct_batch_pwrigid(
+        (_fname_tot_els, new_template_els, _templates_els, _x_shifts_els, _y_shifts_els,
+         _z_shifts_els, _coord_shifts_els) = _motion_correct_batch_pwrigid(
             self.lazy_dataset, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
-            upsample_factor_grid=self.upsample_factor_grid,
-            max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
-            num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter,
-            template=self.total_template_els,
-            save_movie=save_movie, filter_kernel=self.filter_kernel,
-            bigtiff=self.bigtiff)
+            upsample_factor_grid=self.upsample_factor_grid, max_deviation_rigid=self.max_deviation_rigid,
+            num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
+            save_movie=save_movie, filter_kernel=self.filter_kernel, bigtiff=self.bigtiff)
 
         if np.isnan(np.sum(new_template_els)):
             raise Exception(
@@ -322,7 +319,7 @@ class MotionCorrect(object):
 
 
 def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int],
-                                splits: int = 56, num_splits_to_process: int = None, num_iter: int = 1,
+                                frames_per_split: int = 1000, num_splits_to_process: int = None, num_iter: int = 1,
                                 template: np.ndarray = None, save_movie_rigid: bool = False, add_to_movie: float = None,
                                 filter_kernel: np.ndarray = None,
                                 bigtiff: bool = False) -> tuple[str, np.ndarray, list, list]:
@@ -373,12 +370,12 @@ def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tupl
         else:
             save_flag = False
 
-        if iter_ == num_iter - 1 and save_flag:  # Idea: If we are saving out the full movie, sampling to just get the template is insufficient
-            num_splits_to_process = None
-        fname_tot_rig, res_rig = _execute_motion_correction_iteration(lazy_dataset, splits, strides=None, overlaps=None,
+        fname_tot_rig, res_rig = _execute_motion_correction_iteration(lazy_dataset, frames_per_split, strides=None,
+                                                                      overlaps=None,
                                                                       add_to_movie=add_to_movie, template=old_templ,
                                                                       max_shifts=max_shifts, max_deviation_rigid=0,
-                                                                      save_movie=save_flag, num_splits=num_splits_to_process,
+                                                                      save_movie=save_flag,
+                                                                      num_splits=num_splits_to_process,
                                                                       filter_kernel=filter_kernel,
                                                                       bigtiff=bigtiff)
 
@@ -401,7 +398,8 @@ def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tupl
 def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int], strides: tuple[int, int],
                                   overlaps: tuple[int, int], add_to_movie: float,
                                   upsample_factor_grid: int = 4, max_deviation_rigid: int = 3,
-                                  splits: int = 56, num_splits_to_process: Optional[int] = None, num_iter: int = 1,
+                                  frames_per_split: int = 1000, num_splits_to_process: Optional[int] = None,
+                                  num_iter: int = 1,
                                   template: Optional[np.ndarray] = None, save_movie: bool = False,
                                   filter_kernel: Optional[np.ndarray] = None,
                                   bigtiff=False) -> tuple[str, np.ndarray, list, list, list, list, list]:
@@ -442,7 +440,7 @@ def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tu
 
         if iter_ == num_iter - 1 and save_flag:
             num_splits_to_process = None
-        fname_tot_els, res_el = _execute_motion_correction_iteration(lazy_dataset, splits, strides, overlaps,
+        fname_tot_els, res_el = _execute_motion_correction_iteration(lazy_dataset, frames_per_split, strides, overlaps,
                                                                      add_to_movie=add_to_movie, template=old_templ,
                                                                      max_shifts=max_shifts,
                                                                      max_deviation_rigid=max_deviation_rigid,
@@ -474,8 +472,9 @@ def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tu
     return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
 
 
-def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits: int,
-                                         strides: tuple[int, int], overlaps: tuple[int, int], add_to_movie: float = 0.0,
+def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, frames_per_split: int,
+                                         strides: Optional[tuple[int, int]], overlaps: Optional[tuple[int, int]],
+                                         add_to_movie: float = 0.0,
                                          template: Optional[np.ndarray] = None,
                                          max_shifts: tuple[int, int] = (12, 12), max_deviation_rigid: int = 3,
                                          upsample_factor_grid: int = 4,
@@ -493,26 +492,19 @@ def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits:
             (1) list of shifts for each frame (2) array of frame indices which were registered (3) the local template.
              res holds all of these individual tuples.
     """
+    if template is None:
+        raise Exception('Template must be well-defined for the registration step')
 
     dims = lazy_dataset.shape[1], lazy_dataset.shape[2]
     T = lazy_dataset.shape[0]
 
-    if isinstance(splits, int):
-        idxs = calculate_splits(T, splits)
-    else:
-        idxs = splits
-        save_movie = False
-    if template is None:
-        raise Exception('Template must be well-defined for the registration step')
+    idxs = calculate_splits(T, frames_per_split)
 
-    shape_mov = (np.prod(dims), T)
-    if num_splits is not None:
+    if num_splits is not None and not save_movie:
         num_splits = min(num_splits, len(idxs))
         idxs = random.sample(idxs, num_splits)
-        save_movie = False
 
     if save_movie:
-        import datetime
         current_datetime = datetime.datetime.now()
         timestamp_str = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
         fname_tot = f"data_{timestamp_str}.tiff"
@@ -523,21 +515,22 @@ def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits:
     for idx in idxs:
         logging.debug('Processing: frames: {}'.format(idx))
         pars.append(
-            [lazy_dataset, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
+            [lazy_dataset, fname_tot, idx, template, strides, overlaps, max_shifts, np.array(
                 add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-                filter_kernel])
+             filter_kernel])
 
     split_constant = load_split_heuristic(dims[0], dims[1], T)
-    res = _tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
+    res = _tile_and_correct_dataloader(pars, lazy_dataset, split_constant=split_constant, bigtiff=bigtiff)
     return fname_tot, res
 
 
-def _tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False) -> list[tuple]:
+def _tile_and_correct_dataloader(param_list, lazy_dataset, split_constant=200, bigtiff=False) -> list[tuple]:
     """
     See _execute_motion_correction_iteration for details on what parameters this function uses to perform registration.
     If specified, writes corrected frames to a tiff memmap file (name given by out_fname)
     """
     num_workers = 0
+    movie_shape = lazy_dataset.shape
     tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
     loader_obj = torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate,
@@ -548,13 +541,12 @@ def _tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False) 
     memmap_placeholder = None
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
         num_iters = math.ceil(data[0].shape[0] / split_constant)
-        imgs_net, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+        imgs_net, mc, out_fname, idxs, template, strides, overlaps, max_shifts, \
             add_to_movie, max_deviation_rigid, upsample_factor_grid, \
             filter_kernel = data
         if out_fname is not None:
-            inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
             if memmap_placeholder is None:
-                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype,
+                memmap_placeholder = tifffile.memmap(out_fname, shape=movie_shape, dtype=mc.dtype,
                                                      bigtiff=bigtiff)
         for j in range(num_iters):
 
@@ -607,19 +599,19 @@ class tile_and_correct_dataset():
         return len(self.param_list)
 
     def __getitem__(self, index):
-        lazy_dataset, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
+        lazy_dataset, out_fname, idxs,  template, strides, overlaps, max_shifts, \
             add_to_movie, max_deviation_rigid, upsample_factor_grid, \
             filter_kernel = self.param_list[index]
 
         imgs = lazy_dataset[idxs, :, :]
         mc = np.zeros(imgs.shape, dtype=np.float32)
 
-        return imgs, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid,\
+        return imgs, mc, out_fname, idxs, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, \
             filter_kernel
 
 
-def generate_template_chunk(arr, batch_size=250000):
+def generate_template_chunk(arr: np.ndarray, batch_size: int =250000) -> np.ndarray:
     dim_1_step = int(math.sqrt(batch_size))
     dim_2_step = int(math.sqrt(batch_size))
 
@@ -651,19 +643,23 @@ def regular_collate(batch):
     return batch[0]
 
 
-def calculate_splits(T, splits) -> List:
-    '''
-    Heuristic for calculating splits
-    '''
-    step = T // splits
-    remainder = T % splits
+def calculate_splits(T: int, frames_per_split: int) -> list:
+    """
+    Function used to build a computation work plan for motion correction (decide which frames to run per split, etc.)
+    """
+    if frames_per_split <= 1:
+        raise ValueError("frames_per_split must be an integer greater than 1")
 
-    start = 0
+    start_point = list(range(0, T, frames_per_split))
+    if T - frames_per_split < start_point[-1] and len(start_point) > 1:
+        start_point[-1] = T - frames_per_split
+
     slice_list = []
-    for i in range(splits):
-        end = start + step + (1 if i < remainder else 0)
-        slice_list.append(slice(start, end))
-        start = end
+    start = 0
+    for k in range(len(start_point)):
+        end = min(T, start + frames_per_split)
+        slice_list.append(slice(start, end, 1))
+
     return slice_list
 
 
