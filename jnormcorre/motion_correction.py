@@ -715,43 +715,9 @@ def _upsampled_dft_full(data, upsampled_region_size, upsample_factor, axis_offse
 
 
 # @partial(jit, static_argnums=(1,))
-def _upsampled_dft_jax(data, upsampled_region_size,
-                       upsample_factor, axis_offsets):
+def _upsampled_dft_jax(data: ArrayLike, upsampled_region_size: int,
+                       upsample_factor: int, axis_offsets: ArrayLike) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
     Upsampled DFT by matrix multiplication.
 
     This code is intended to provide the same result as if the following
@@ -769,23 +735,16 @@ def _upsampled_dft_jax(data, upsampled_region_size,
     ``data.size * upsample_factor``.
 
     Args:
-        data : 2D array
-            The input data array (DFT of original data) to upsample.
-
-        upsampled_region_size : integer
-            The size of the region to be sampled.  If one integer is provided, it
+        data (jnp.array). The input data array (DFT of original data) to upsample.
+        upsampled_region_size (int). The size of the region to be sampled.  If one integer is provided, it
             is duplicated up to the dimensionality of ``data``.
-
-        upsample_factor : integer, optional
-            The upsampling factor.  Defaults to 1.
-
-        axis_offsets : tuple of integers, optional
+        upsample_factor (int). The upsampling factor for the DFT.
+        axis_offsets (jnp.array).
             The offsets of the region to be sampled.  Defaults to None (uses
             image center)
-
     Returns:
-        output : 2D ndarray
-                The upsampled DFT of the specified region.
+        output (jnp.array)
+            The upsampled DFT of the specified region.
     """
 
     # Calculate col_kernel
@@ -938,7 +897,7 @@ def return_identity(a, b):
 # @partial(jit, static_argnums=(2,))
 def register_translation_jax_simple(src_image: ArrayLike, target_image: ArrayLike,
                                     upsample_factor: int,
-                                    max_shifts: tuple[int, int]=(10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
+                                    max_shifts: tuple[int, int] = (10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
     Finds optimal rigid shifts to register target_image (template) with src_image (input image). Negate
         these shifts to get the optimal rigid transformation from src_image to template.
@@ -1128,7 +1087,7 @@ def threshold_shifts_1_else(new_cross_corr, shift_ub, shift_lb):
 
 
 # @partial(jit, static_argnums=(2,))
-def register_translation_jax_full(src_image: ArrayLike, target_image: ArrayLike, upsample_factor: int, \
+def register_translation_jax_full(src_image: ArrayLike, target_image: ArrayLike, upsample_factor: int,
                                   shifts_lb: ArrayLike,
                                   shifts_ub: ArrayLike, max_shifts=(10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
