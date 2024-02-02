@@ -402,8 +402,7 @@ def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tupl
 
 
 def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int], strides: tuple[int, int],
-                                  overlaps: tuple[int, int], add_to_movie: float, newoverlaps=None,
-                                  newstrides=None,
+                                  overlaps: tuple[int, int], add_to_movie: float,
                                   upsample_factor_grid: int = 4, max_deviation_rigid: int = 3,
                                   splits: int = 56, num_splits_to_process: Optional[int] = None, num_iter: int = 1,
                                   template: Optional[np.ndarray] = None, save_movie: bool = False,
@@ -450,7 +449,6 @@ def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tu
                                                                      add_to_movie=add_to_movie, template=old_templ,
                                                                      max_shifts=max_shifts,
                                                                      max_deviation_rigid=max_deviation_rigid,
-                                                                     newoverlaps=newoverlaps, newstrides=newstrides,
                                                                      upsample_factor_grid=upsample_factor_grid,
                                                                      save_movie=save_flag,
                                                                      num_splits=num_splits_to_process,
@@ -479,10 +477,11 @@ def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tu
     return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
 
 
-def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits: int, strides: tuple[int, int],
-                                         overlaps: tuple[int, int], add_to_movie: float = 0.0, template: Optional[np.ndarray] = None,
+def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits: int,
+                                         strides: tuple[int, int], overlaps: tuple[int, int], add_to_movie: float = 0.0,
+                                         template: Optional[np.ndarray] = None,
                                          max_shifts: tuple[int, int] = (12, 12), max_deviation_rigid: int = 3,
-                                         newoverlaps=None, newstrides=None, upsample_factor_grid: int = 4,
+                                         upsample_factor_grid: int = 4,
                                          save_movie: bool = True, num_splits: Optional[int] = None,
                                          nonneg_movie:int = False, filter_kernel: np.ndarray = None,
                                          bigtiff: bool = False) -> tuple[str, list[tuple]]:
@@ -529,7 +528,7 @@ def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits:
         pars.append(
             [lazy_dataset, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
                 add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-             newoverlaps, newstrides, nonneg_movie, filter_kernel])
+             nonneg_movie, filter_kernel])
 
     split_constant = load_split_heuristic(dims[0], dims[1], T)
     res = _tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
@@ -553,7 +552,7 @@ def _tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False) 
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
         num_iters = math.ceil(data[0].shape[0] / split_constant)
         imgs_net, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, \
             nonneg_movie, filter_kernel = data
         if out_fname is not None:
             inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
@@ -612,14 +611,14 @@ class tile_and_correct_dataset():
 
     def __getitem__(self, index):
         lazy_dataset, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, \
             nonneg_movie, filter_kernel = self.param_list[index]
 
         imgs = lazy_dataset[idxs, :, :]
         mc = np.zeros(imgs.shape, dtype=np.float32)
 
         return imgs, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid,\
             nonneg_movie, filter_kernel
 
 
@@ -644,7 +643,7 @@ def generate_template_chunk(arr, batch_size=250000):
 
 
 @partial(jit)
-def nan_processing(arr):
+def nan_processing(arr: ArrayLike) -> ArrayLike:
     p = jnp.nanmean(arr, 0)
     q = jnp.nanmin(p)
     r = jnp.nan_to_num(p, q)
@@ -686,22 +685,16 @@ def load_split_heuristic(d1, d2, T):
     return min(T, new_T)
 
 
-def bin_median(mat, window=10, exclude_nans=True):
-    """ compute median of 3D array in along axis o by binning values
+def bin_median(mat: np.ndarray, window: int = 10, exclude_nans: bool = True):
+    """
+    Compute median of 3D array in along axis 0 by binning values
 
     Args:
-        mat: ndarray
-            input 3D matrix, time along first dimension
-
-        window: int
-            number of frames in a bin
+        mat (np.ndarray). Input 3D matrix, time along first dimension
+        window (int). Number of frames in a bin
 
     Returns:
-        img:
-            median image
-
-    Raises:
-        Exception 'Path to template does not exist:'+template
+        img (np.ndarray). Median image
     """
 
     T, d1, d2 = np.shape(mat)
@@ -1749,7 +1742,7 @@ def _register_to_template_1p_pwrigid(img, img_filtered, template, strides_0, str
             max shifts in x and y
 
         upsample_factor_grid: int
-            if newshapes or newstrides are not specified this is inferred upsampling by a constant factor the cvector field
+            if newshapes is not specified this is inferred upsampling by a constant factor the cvector field
 
         upsample_factor_fft: int
             resolution of fractional shifts
@@ -1856,7 +1849,7 @@ def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1
             max shifts in x and y
 
         upsample_factor_grid: int
-            if newshapes or newstrides are not specified this is inferred upsampling by a constant factor the cvector field
+            if newshapes is not specified this is inferred upsampling by a constant factor the cvector field
 
         upsample_factor_fft: int
             resolution of fractional shifts
