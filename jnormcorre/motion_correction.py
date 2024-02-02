@@ -2,19 +2,22 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import datetime
 from builtins import range
 from builtins import str
-
-import cv2
 import jax
 import torch
 from past.utils import old_div
+from typing import *
+from jax.typing import ArrayLike
+from jnormcorre.utils.lazy_array import lazy_data_loader
 
 logging.basicConfig(level=logging.ERROR)
 import numpy as np
 import tifffile
 from typing import List
 from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
+from jnormcorre.utils.lazy_array import lazy_data_loader
 from tqdm import tqdm
 import math
 import jax.numpy as jnp
@@ -23,35 +26,29 @@ from functools import partial
 import random
 
 
-### General object for motion correction
-## Use case: you have a good template (maybe you run registration on 10K frames, or you used a clever method to find a great template from data. Now you want to register lots of frames to this template. This object is a transparent way to use that functionality from this repo
 class frame_corrector():
-    def __init__(self, template, pw_rigid, max_shifts, strides, overlaps, max_deviation_rigid, min_mov = None, batching=100):
+    def __init__(self, template: np.ndarray,
+                 max_shifts: Tuple[int, int], strides: Tuple[int, int],
+                 overlaps: Tuple[int, int], max_deviation_rigid: int,
+                 min_mov: Optional[float] = None,
+                 batching: int = 100) -> None:
         """
-        Use Case: You have a good template, and you want to use the functionality from this codebase to align
-        (potentially unseen) frames to this data.
+        Standalone motion correction object, allowing users to register frames via rigid or piecewise
+        rigid motion correction to a given template.
 
-        Inputs:
-            template: np.ndarray. Shape (d1, d2) where d1 and d2 are the FOV dimensions
-            pw_rigid: Boolean. True if we want to do piecewise rigid registration
-            max_shifts: Tuple of two integers. Maximum rigid shift allowed when doing alignment
-            strides: Tuple of two integers.
-            Overlaps: Tuple of two integers.
-                As below, strides[0] + overlaps[0] and strides[1] + overlaps[1] are the patch size dimensions.
-            max_deviation_rigid. Integer. The maximum deviation between the rigid registration results and the template when doing
-                piecewise rigid registration.
+        Args:
+            template (np.ndarray): Shape (d1, d2) where d1 and d2 are the FOV dimensions
+            max_shifts (Tuple): Two integers, specifying maximum shift in the two FOV dimensions (height, width)
+            strides (Tuple): Two integers, used to specify patch dimensions for pwrigid registration
+            overlaps (Tuple): Overlap b/w patches. strides[i] + overlaps[i] are the patch size dimensions.
+            max_deviation_rigid (int): Specifies max number of pixels a patch can deviate from the rigid shifts.
+            min_mov (float). The minimum value of the movie, if known.
+            batching (int). Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
         """
         self.template = template
-
-
-        if pw_rigid:
-            self.corr_method = "pwrigid"
-        else:
-            self.corr_method = "rigid"
-
         self.max_shifts = max_shifts
+        self.upsample_factor_fft = 10
 
-        self.upsample_factor_fft = 10  ##NOTE: Hardcoded Value in original method
         if min_mov is not None:
             self.add_to_movie = -min_mov
         else:
@@ -62,41 +59,53 @@ class frame_corrector():
         self.max_deviation_rigid = max_deviation_rigid
         self.batching = batching
 
-        if self.corr_method == "pwrigid":
-            self.registration_method = jit(
-                vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)),
-                static_argnums=(2, 3, 4, 5, 7))
+        # Set the pwrigid function
+        self.pw_registration_method = jit(
+            vmap(_register_to_template_pwrigid, in_axes=(0, None, None, None, None, None, None, None, None, None)),
+            static_argnums=(2, 3, 4, 5, 7))
 
-            def simplified_registration_func(frames):
-                return self.registration_method(frames, self.template, self.strides[0], self.strides[1], \
-                                                self.overlaps[0], self.overlaps[1], self.max_shifts,
-                                                self.upsample_factor_fft, \
-                                                self.max_deviation_rigid, self.add_to_movie)[0]
+        def simplified_registration_func_pw(frames: np.ndarray) -> ArrayLike:
+            return self.pw_registration_method(frames, self.template, self.strides[0], self.strides[1],
+                                               self.overlaps[0], self.overlaps[1], self.max_shifts,
+                                               self.upsample_factor_fft, self.max_deviation_rigid, self.add_to_movie)[0]
 
-            self.jitted_method = simplified_registration_func
+        self.jitted_pwrigid_method = simplified_registration_func_pw
 
-        elif self.corr_method == "rigid":
-            self.registration_method = vmap(tile_and_correct_rigid, in_axes=(0, None, None, None))
+        # Set the rigid function
+        self.rigid_registration_method = jit(vmap(_register_to_template_rigid, in_axes=(0, None, None, None)))
 
-            def simplified_registration_func(frames):
-                return self.registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
+        def simplified_registration_func_rig(frames: np.ndarray) -> ArrayLike:
+            return self.rigid_registration_method(frames, self.template, self.max_shifts, self.add_to_movie)[0]
 
-            self.jitted_method = jit(simplified_registration_func)
+        self.jitted_rigid_method = simplified_registration_func_rig
+
+    def register_frames(self, frames: np.ndarray, pw_rigid: bool = False) -> np.ndarray:
+        """
+        Function to register a set of frames to this object's template.
+
+        Args:
+            frames (np.ndarray): dimensions (T, d1, d2), where T is the number of frames and d1, d2 are FOV dims
+            pwrigid (bool): Indicates whether we do piecewise rigid or rigid registration. Defaults to rigid.
+
+        Returns:
+            corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
+        """
+        if pw_rigid:
+            output = self.jitted_pwrigid_method(frames)
         else:
-            raise ValueError("Invalid method provided. Must either be pwrigid or rigid")
+            output = self.jitted_rigid_method(frames)
+        return np.array(output)
 
-    def register_frames(self, frames):
-        """
-        Inputs: 
-            frames: np.ndarray, dimensions (T, d1, d2), where T is the number of frames and d1, d2 are the FOV dimensions
-        Outputs: 
-            corrected_frames: jnp.array. Dimensions (T, d1, d2). The registered output from the input (frames)
-        
-        """
-        return self.jitted_method(frames)
+    @property
+    def rigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        return self.jitted_rigid_method
+
+    @property
+    def pwrigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        return self.jitted_pwrigid_method
 
 
-def verify_strides_and_overlaps(dim, stride, overlap):
+def verify_strides_and_overlaps(dim: int, stride: int, overlap: int) -> None:
     if not stride > 0:
         raise ValueError(
             "Stride value needs to be positive. Right now it is {}. See documentation for more details.".format(
@@ -121,97 +130,56 @@ def verify_strides_and_overlaps(dim, stride, overlap):
                 stride, overlap, dim))
 
 
-####### END OF PLACE IN FUNCTIONS #######
-
 class MotionCorrect(object):
     """
     class implementing motion correction operations
     """
 
-    def __init__(self, lazy_dataset, min_mov=None, max_shifts=(6, 6), niter_rig=1, niter_els=1, splits_rig=14,
-                 num_splits_to_process_rig=None, num_splits_to_process_els=None, strides=(96, 96), overlaps=(32, 32),
-                 splits_els=14, upsample_factor_grid=4, max_deviation_rigid=3, nonneg_movie=True, pw_rigid=False,
-                 gSig_filt=None, bigtiff=False):
+    def __init__(self, lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int] = (6, 6),
+                 frames_per_split: int = 1000, num_splits_to_process_rig: Optional[int] = None, niter_rig: int = 1,
+                 pw_rigid: bool = False, strides: tuple[int, int] = (96, 96), overlaps: tuple[int, int] = (32, 32),
+                 max_deviation_rigid: int = 3, num_splits_to_process_els: Optional[int] = None,
+                 niter_els: int = 1, min_mov: float = None, upsample_factor_grid: int = 4,
+                 gSig_filt: Optional[list[int]] = None, bigtiff: bool = False) -> None:
+
         """
         Constructor class for motion correction operations
 
         Args:
-           lazy_dataset: str
-               path to file to motion correct
-
-           min_mov: int16 or float32
-               estimated minimum value of the movie to produce an output that is positive
-
-           max_shifts: tuple
-               maximum allow rigid shift
-
-           niter_rig':int
-               maximum number of iterations rigid motion correction, in general is 1. 0
-               will quickly initialize a template with the first frames
-               
-           niter_els:int
-                maximum number of iterations of piecewise rigid motion correction. Default value of 1
-
-           splits_rig': int
-            for parallelization split the movies in num_splits chuncks across time
-
-           num_splits_to_process_rig: list,
-               For rigid and piecewise rigid motion correction, the template is often update over many iterations. If there are "n" iterations, then num_spits_to_process_rig tells us how many splits (chunks of data) look at per iteration.  
-               num_splits_to_process_rig are considered
-               
-            num_splits_to_process_rig: list,
-               if none all the splits are processed and the movie is saved, otherwise at each iteration
-               num_splits_to_process_rig are considered
-
-           strides: tuple
-               intervals at which patches are laid out for motion correction
-
-           overlaps: tuple
-               overlap between pathes (size of patch strides+overlaps)
-
-           pw_rigid: bool, default: False
-               flag for performing motion correction when calling motion_correct
-
-           splits_els':list
-               for parallelization split the movies in num_splits chuncks across time
-
-           num_splits_to_process_els: list,
-               if none all the splits are processed and the movie is saved  otherwise at each iteration
-                num_splits_to_process_els are considered
-
-           upsample_factor_grid:int,
-               upsample factor of shifts per patches to avoid smearing when merging patches
-
-           max_deviation_rigid:int
-               maximum deviation allowed for patch with respect to rigid shift
-
-           nonneg_movie: boolean
-               make the SAVED movie and template mostly nonnegative by removing min_mov from movie
-
-           gSig_filt: tuple. Default None.
-                Contains 2 components describing the dimensions of a kernel. We use the kernel to high-pass filter data which has large background contamination.
-
-       Returns:
-           self
-
+            lazy_dataset (lazy_data_loader): Lazy data loader for loading frames of the data
+            max_shifts (Tuple): Two integers, specifying maximum shift in the two FOV dimensions (height, width)
+            frames_per_split (int): Integer larger than 1. Number of frames we use to generate each local template.
+            num_splits_to_process_rig (int): Number of splits we process per iteration of rigid motion correction
+            niter_rig (int): Number of iterations of rigid motion correction
+            pw_rigid (bool): Whether we additionally run piecewise rigid registration
+            strides (Tuple): Two integers, used to specify patch dimensions for pwrigid registration
+            overlaps (Tuple): Overlap b/w patches. strides[i] + overlaps[i] are the patch size dimensions.
+            max_deviation_rigid (int): Specifies max number of pixels a patch can deviate from the rigid shifts.
+            num_splits_to_process_els (int): Number of splits we process per iteration of pwrigid motion correction
+            niter_els: Number of iterations of piecewise rigid registration
+            min_mov (float). The minimum value of the movie, if known
+            gSig_filt (list): List with 1 positive integer describing a Gaussian standard deviation. We use this to construct a kernel to
+                high-pass filter data which has large background contamination.
+            bigtiff (bool): Indicates whether or not movie is saved as a bigtiff or regular tiff
         """
         if not isinstance(niter_els, int) or niter_els < 1:
-            raise ValueError(f"please provide n_iter as an int of 1 or higher.")
+            raise ValueError(f"please provide niter_els as an int of 1 or higher.")
+
+        if not isinstance(niter_rig, int) or niter_rig < 1:
+            raise ValueError(f"please provide niter_rig as an int of 1 or higher.")
 
         self.lazy_dataset = lazy_dataset
         self.max_shifts = max_shifts
         self.niter_rig = niter_rig
         self.niter_els = niter_els
-        self.splits_rig = splits_rig
+        self.frames_per_split = frames_per_split
         self.num_splits_to_process_rig = num_splits_to_process_rig
         self.strides = strides
         self.overlaps = overlaps
-        self.splits_els = splits_els
         self.num_splits_to_process_els = num_splits_to_process_els
         self.upsample_factor_grid = upsample_factor_grid
         self.max_deviation_rigid = max_deviation_rigid
         self.min_mov = min_mov
-        self.nonneg_movie = nonneg_movie
         self.pw_rigid = bool(pw_rigid)
         self.bigtiff = bigtiff
         self.file_FOV_dims = self.lazy_dataset.shape[1], self.lazy_dataset.shape[2]
@@ -223,19 +191,19 @@ class MotionCorrect(object):
         else:
             self.filter_kernel = None
 
-    def motion_correct(self, template=None, save_movie=False):
-        """general function for performing all types of motion correction. The
-        function will perform either rigid or piecewise rigid motion correction
-        depending on the attribute self.pw_rigid. A template can be passed, and the
-        output can be saved as a memory mapped file.
+    def motion_correct(self, template: Optional[np.ndarray] = None,
+                       save_movie: Optional[bool] = False) -> tuple[frame_corrector, str]:
+        """General driver function which performs motion correction
 
         Args:
-            template: ndarray, default: None
-                template provided by user for motion correction
-
-            save_movie: bool, default: False
+            template (ndarray): Template provided by user for motion correction default
+            save_movie (bool):
                 flag for saving motion corrected file(s) as memory mapped file(s)
 
+        Returns:
+            frame_corrector_obj (jnormcorre.motion_correction.frame_corrector): Object for applying frame correction
+                with final inferred template
+            target_file (str): path to saved file
         """
         frame_constant = 400
         if self.min_mov is None:
@@ -255,11 +223,11 @@ class MotionCorrect(object):
             # Verify that the strides and overlaps are meaningfully defined
             verify_strides_and_overlaps(self.file_FOV_dims[0], self.strides[0], self.overlaps[0])
             verify_strides_and_overlaps(self.file_FOV_dims[1], self.strides[1], self.overlaps[1])
-            self.motion_correct_pwrigid(template=template, save_movie=save_movie)
+            self._motion_correct_pwrigid(template=template, save_movie=save_movie)
             b0 = np.ceil(np.maximum(np.max(np.abs(self.x_shifts_els)),
                                     np.max(np.abs(self.y_shifts_els))))
         else:
-            self.motion_correct_rigid(template=template, save_movie=save_movie)
+            self._motion_correct_rigid(template=template, save_movie=save_movie)
             b0 = np.ceil(np.max(np.abs(self.shifts_rig)))
         self.border_to_0 = b0.astype(int)
         self.target_file = self.fname_tot_els if self.pw_rigid else self.fname_tot_rig
@@ -268,48 +236,34 @@ class MotionCorrect(object):
             template = self.total_template_els
         else:
             template = self.total_template_rig
-        frame_correction_obj = frame_corrector(template, self.pw_rigid, self.max_shifts,
-                                                                           self.strides, self.overlaps,
-                                                                           self.max_deviation_rigid, min_mov=self.min_mov)
+        frame_correction_obj = frame_corrector(template, self.max_shifts,
+                                               self.strides, self.overlaps,
+                                               self.max_deviation_rigid, min_mov=self.min_mov)
         return frame_correction_obj, self.target_file
 
-    def motion_correct_rigid(self, template=None, save_movie=False) -> None:
+    def _motion_correct_rigid(self, template: Optional[np.ndarray] = None,
+                              save_movie: Optional[bool] = False) -> None:
         """
         Perform rigid motion correction
 
         Args:
-            template: ndarray 2D 
-                if known, one can pass a template to register the frames to
-
-            save_movie_rigid:Bool
-                save the movies vs just get the template
-
-        Important Fields:
-            self.fname_tot_rig: name of the mmap file saved
-
-            self.total_template_rig: template updated by iterating  over the chunks
-
-            self.templates_rig: list of templates. one for each chunk
-
-            self.shifts_rig: shifts in x and y per frame
+            template (np.ndarray) Optional template (if known) for performing registration.
+            save_movie (bool): flag to save final motion corrected movie
         """
-        logging.debug('Entering Rigid Motion Correction')
-        logging.debug(-self.min_mov)  # XXX why the minus?
         self.total_template_rig = template
         self.templates_rig: List = []
         self.fname_tot_rig: List = []
         self.shifts_rig: List = []
 
-        _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = motion_correct_batch_rigid(
+        _fname_tot_rig, _total_template_rig, _templates_rig, _shifts_rig = _motion_correct_batch_rigid(
             self.lazy_dataset,
             self.max_shifts,
-            splits=self.splits_rig,
+            frames_per_split=self.frames_per_split,
             num_splits_to_process=self.num_splits_to_process_rig,
             num_iter=self.niter_rig,
             template=self.total_template_rig,
             save_movie_rigid=save_movie,
             add_to_movie=-self.min_mov,
-            nonneg_movie=self.nonneg_movie,
             filter_kernel=self.filter_kernel,
             bigtiff=self.bigtiff)
         if template is None:
@@ -319,37 +273,19 @@ class MotionCorrect(object):
         self.fname_tot_rig += [_fname_tot_rig]
         self.shifts_rig += _shifts_rig
 
-    def motion_correct_pwrigid(self, save_movie: bool = True, template: np.ndarray = None) -> None:
-        """Perform pw-rigid motion correction
+    def _motion_correct_pwrigid(self, template: Optional[np.ndarray] = None,
+                                save_movie: Optional[bool] = False) -> None:
+        """
+        Perform pw-rigid motion correction
 
         Args:
-            save_movie:Bool
-                save the movies vs just get the template
-
-            template: ndarray 2D 
-                if known, one can pass a template to register the frames to
-
-            show_template: boolean
-                whether to show the updated template at each iteration
-
-        Important Fields:
-            self.fname_tot_els: name of the mmap file saved
-            self.templates_els: template updated by iterating  over the chunks
-            self.x_shifts_els: shifts in x per frame per patch
-            self.y_shifts_els: shifts in y per frame per patch
-            self.z_shifts_els: shifts in z per frame per patch 
-            self.coord_shifts_els: coordinates associated to the patch for
-            values in x_shifts_els and y_shifts_els
-            self.total_template_els: list of templates. one for each chunk
-
-        Raises:
-            Exception: 'Error: Template contains NaNs, Please review the parameters'
+            template (np.ndarray) Optional template (if known) for performing registration.
+            save_movie (bool): flag to save final motion corrected movie
         """
 
         num_iter = self.niter_els
         if template is None:
-            logging.info('Generating template by rigid motion correction')
-            self.motion_correct_rigid(save_movie=False)
+            self._motion_correct_rigid(save_movie=False)
             self.total_template_els = self.total_template_rig.copy()
         else:
             self.total_template_els = template
@@ -361,15 +297,12 @@ class MotionCorrect(object):
 
         self.coord_shifts_els: List = []
 
-        _fname_tot_els, new_template_els, _templates_els, \
-            _x_shifts_els, _y_shifts_els, _z_shifts_els, _coord_shifts_els = motion_correct_batch_pwrigid(
+        (_fname_tot_els, new_template_els, _templates_els, _x_shifts_els, _y_shifts_els,
+         _z_shifts_els, _coord_shifts_els) = _motion_correct_batch_pwrigid(
             self.lazy_dataset, self.max_shifts, self.strides, self.overlaps, -self.min_mov,
-            upsample_factor_grid=self.upsample_factor_grid,
-            max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
-            num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter,
-            template=self.total_template_els,
-            save_movie=save_movie, nonneg_movie=self.nonneg_movie, filter_kernel=self.filter_kernel,
-            bigtiff=self.bigtiff)
+            upsample_factor_grid=self.upsample_factor_grid, max_deviation_rigid=self.max_deviation_rigid,
+            num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter, template=self.total_template_els,
+            save_movie=save_movie, filter_kernel=self.filter_kernel, bigtiff=self.bigtiff)
 
         if np.isnan(np.sum(new_template_els)):
             raise Exception(
@@ -385,63 +318,29 @@ class MotionCorrect(object):
         self.coord_shifts_els += _coord_shifts_els
 
 
-def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_to_process=None, num_iter=1,
-                               template=None, save_movie_rigid=False, add_to_movie=None,
-                               nonneg_movie=False, filter_kernel=None, bigtiff=False):
+def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int],
+                                frames_per_split: int = 1000, num_splits_to_process: int = None, num_iter: int = 1,
+                                template: np.ndarray = None, save_movie_rigid: bool = False, add_to_movie: float = None,
+                                filter_kernel: np.ndarray = None,
+                                bigtiff: bool = False) -> tuple[str, np.ndarray, list, list]:
     """
-    Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
-
-    Args:
-        fname: str
-            name of the movie to motion correct. It should not contain nans. All the loadable formats from CaImAn are acceptable
-
-        max_shifts: tuple
-            x and y (and z if 3D) maximum allowed shifts
-
-        splits: int
-            number of batches in which the movies is subdivided
-
-        num_splits_to_process: int
-            number of batches to process. when not None, the movie is not saved since only a random subset of batches will be processed
-
-        num_iter: int
-            number of iterations to perform. The more iteration the better will be the template.
-
-        template: ndarray
-            if a good approximation of the template to register is available, it can be used
-
-        save_movie_rigid: boolean
-             toggle save movie
-
-        subidx: slice
-            Indices to slice
-
-        indices: tuple(slice), default: (slice(None), slice(None))
-           Use that to apply motion correction only on a part of the FOV
-
-        filter_kernel: ndarray. Default: None.
-            Used to high-pass filter 1p data for template estimation/registration
+    Performs 1 pass of rigid motion correction; see the following functions for parameter details:
+        (1) MotionCorrection object constructor
+        (2) MotionCorrection.motion_correct
+        (3) MotionCorrection._motion_correct_rigid
 
     Returns:
-         fname_tot_rig: str
-
-         total_template:ndarray
-
-         templates:list
-              list of produced templates, one per batch
-
-         shifts: list
-              inferred rigid shifts to correct the movie
-
-    Raises:
-        Exception 'The movie contains nans. Nans are not allowed!'
-
+        fname_tot_rig (str): Filename of saved movie (None if no movie is saved at this point)
+        total_template (np.ndarray): 2D estimated template
+        templates: (list): List of 2D local templates identified in this pass
+        shifts: (list). List of length (T) where T is the number of frames registered.
+            Each element is a np.ndarray describing the applied shifts in both FOV dimensions.
     """
 
     T = lazy_dataset.shape[0]
     Ts = np.arange(T).shape[0]
     step = Ts // 50
-    corrected_slicer = slice(None, min(T-1, 4000), step + 1)  # Don't need too many frames to init the template
+    corrected_slicer = slice(None, min(T - 1, 4000), step + 1)  # Don't need too many frames to init the template
     m = lazy_dataset[corrected_slicer, :, :]
 
     # Initialize template by sampling frames uniformly throughout the movie and taking the median
@@ -471,20 +370,18 @@ def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_t
         else:
             save_flag = False
 
-        if iter_ == num_iter - 1 and save_flag:  # Idea: If we are saving out the full movie, sampling to just get the template is insufficient
-            num_splits_to_process = None
-        logging.info("We are about to enter motion correction piecewise")
-        fname_tot_rig, res_rig = motion_correction_piecewise(lazy_dataset, splits, strides=None, overlaps=None,
-                                                             add_to_movie=add_to_movie, template=old_templ,
-                                                             max_shifts=max_shifts, max_deviation_rigid=0,
-                                                             save_movie=save_flag, num_splits=num_splits_to_process,
-                                                             nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
-                                                             bigtiff=bigtiff)
+        fname_tot_rig, res_rig = _execute_motion_correction_iteration(lazy_dataset, frames_per_split, strides=None,
+                                                                      overlaps=None,
+                                                                      add_to_movie=add_to_movie, template=old_templ,
+                                                                      max_shifts=max_shifts, max_deviation_rigid=0,
+                                                                      save_movie=save_flag,
+                                                                      num_splits=num_splits_to_process,
+                                                                      filter_kernel=filter_kernel,
+                                                                      bigtiff=bigtiff)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
         if filter_kernel is not None:
             new_templ = high_pass_filter_cv(filter_kernel, new_templ)
-
 
     total_template = new_templ
     templates = []
@@ -498,66 +395,28 @@ def motion_correct_batch_rigid(lazy_dataset, max_shifts, splits=56, num_splits_t
     return fname_tot_rig, total_template, templates, shifts
 
 
-def motion_correct_batch_pwrigid(lazy_dataset, max_shifts, strides, overlaps, add_to_movie, newoverlaps=None,
-                                 newstrides=None,
-                                 upsample_factor_grid=4, max_deviation_rigid=3,
-                                 splits=56, num_splits_to_process=None, num_iter=1,
-                                 template=None, save_movie=False, nonneg_movie=False,
-                                 filter_kernel=None, bigtiff=False):
+def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int], strides: tuple[int, int],
+                                  overlaps: tuple[int, int], add_to_movie: float,
+                                  upsample_factor_grid: int = 4, max_deviation_rigid: int = 3,
+                                  frames_per_split: int = 1000, num_splits_to_process: Optional[int] = None,
+                                  num_iter: int = 1,
+                                  template: Optional[np.ndarray] = None, save_movie: bool = False,
+                                  filter_kernel: Optional[np.ndarray] = None,
+                                  bigtiff=False) -> tuple[str, np.ndarray, list, list, list, list, list]:
     """
-    Function that perform memory efficient hyper parallelized rigid motion corrections while also saving a memory mappable file
-
-    Args:
-        fname: str
-            name of the movie to motion correct. It should not contain nans. All the loadable formats from CaImAn are acceptable
-
-        strides: tuple
-            strides of patches along x and y
-
-        overlaps:
-            overlaps of patches along x and y. example: If strides = (64,64) and overlaps (32,32) patches will be (96,96)
-
-        newstrides: tuple
-            overlaps after upsampling
-
-        newoverlaps: tuple
-            strides after upsampling
-
-        max_shifts: tuple
-            x and y maximum allowed shifts
-
-        splits: int
-            number of batches in which the movies is subdivided
-
-        num_splits_to_process: int
-            number of batches to process. when not None, the movie is not saved since only a random subset of batches will be processed
-
-        num_iter: int
-            number of iterations to perform. The more iteration the better will be the template.
-
-        template: ndarray
-            if a good approximation of the template to register is available, it can be used
-
-        save_movie_rigid: boolean
-             toggle save movie
-
-        indices: tuple(slice), default: (slice(None), slice(None))
-           Use that to apply motion correction only on a part of the FOV
+    Performs 1 pass of piecewise rigid motion correction; see the following functions for parameter details:
+        (1) MotionCorrection object constructor
+        (2) MotionCorrection.motion_correct
+        (3) MotionCorrection._motion_correct_pwrigid
 
     Returns:
-        fname_tot_rig: str
-
-        total_template:ndarray
-
-        templates:list
-            list of produced templates, one per batch
-
-        shifts: list
-            inferred rigid shifts to corrrect the movie
-
-    Raises:
-        Exception 'You need to initialize the template with a good estimate. See the motion'
-                        '_correct_batch_rigid function'
+        fname_tot_els (str). String describing the filename saved out (None if nothing is saved)
+        total_template (np.ndarray). Estimated global template from this step
+        templates (list): list of local templates from this pass of motion correction
+        x_shifts (list). List of x-dimension shifts across patches and frames
+        y_shifts (list). List of y-dimension shifts across patches and frames
+        z_shifts (list). List of z-dimension shifts across patches and frames
+        coord_shifts: list
     """
     if template is None:
         raise Exception('You need to initialize the template with a good estimate. See the motion'
@@ -581,16 +440,15 @@ def motion_correct_batch_pwrigid(lazy_dataset, max_shifts, strides, overlaps, ad
 
         if iter_ == num_iter - 1 and save_flag:
             num_splits_to_process = None
-        fname_tot_els, res_el = motion_correction_piecewise(lazy_dataset, splits, strides, overlaps,
-                                                            add_to_movie=add_to_movie, template=old_templ,
-                                                            max_shifts=max_shifts,
-                                                            max_deviation_rigid=max_deviation_rigid,
-                                                            newoverlaps=newoverlaps, newstrides=newstrides,
-                                                            upsample_factor_grid=upsample_factor_grid,
-                                                            save_movie=save_flag,
-                                                            num_splits=num_splits_to_process,
-                                                            nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
-                                                            bigtiff=bigtiff)
+        fname_tot_els, res_el = _execute_motion_correction_iteration(lazy_dataset, frames_per_split, strides, overlaps,
+                                                                     add_to_movie=add_to_movie, template=old_templ,
+                                                                     max_shifts=max_shifts,
+                                                                     max_deviation_rigid=max_deviation_rigid,
+                                                                     upsample_factor_grid=upsample_factor_grid,
+                                                                     save_movie=save_flag,
+                                                                     num_splits=num_splits_to_process,
+                                                                     filter_kernel=filter_kernel,
+                                                                     bigtiff=bigtiff)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
         if filter_kernel is not None:
@@ -614,33 +472,39 @@ def motion_correct_batch_pwrigid(lazy_dataset, max_shifts, strides, overlaps, ad
     return fname_tot_els, total_template, templates, x_shifts, y_shifts, z_shifts, coord_shifts
 
 
-def motion_correction_piecewise(lazy_dataset, splits, strides, overlaps, add_to_movie=0, template=None,
-                                max_shifts=(12, 12), max_deviation_rigid=3, newoverlaps=None, newstrides=None,
-                                upsample_factor_grid=4, save_movie=True, num_splits=None, nonneg_movie=False,
-                                filter_kernel=None, bigtiff=False):
+def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, frames_per_split: int,
+                                         strides: Optional[tuple[int, int]], overlaps: Optional[tuple[int, int]],
+                                         add_to_movie: float = 0.0,
+                                         template: Optional[np.ndarray] = None,
+                                         max_shifts: tuple[int, int] = (12, 12), max_deviation_rigid: int = 3,
+                                         upsample_factor_grid: int = 4,
+                                         save_movie: bool = True, num_splits: Optional[int] = None,
+                                         filter_kernel: np.ndarray = None,
+                                         bigtiff: bool = False) -> tuple[str, list[tuple]]:
     """
-    TODO DOCUMENT
+    Executes a single iteration of motion correction. See the following functions for details:
+    (1) MotionCorrection constructor
+    (2) MotionCorrection.motion_correct
+
+    Returns:
+        fname_tot (str): Filename of the saved data (if it exists)
+        res (list of tuples): For every split (chunk of data) we generate 1 tuple containing
+            (1) list of shifts for each frame (2) array of frame indices which were registered (3) the local template.
+             res holds all of these individual tuples.
     """
+    if template is None:
+        raise Exception('Template must be well-defined for the registration step')
 
     dims = lazy_dataset.shape[1], lazy_dataset.shape[2]
     T = lazy_dataset.shape[0]
 
-    if isinstance(splits, int):
-        idxs = calculate_splits(T, splits)
-    else:
-        idxs = splits
-        save_movie = False
-    if template is None:
-        raise Exception('Template must be well-defined for the registration step')
+    idxs = calculate_splits(T, frames_per_split)
 
-    shape_mov = (np.prod(dims), T)
-    if num_splits is not None:
+    if num_splits is not None and not save_movie:
         num_splits = min(num_splits, len(idxs))
         idxs = random.sample(idxs, num_splits)
-        save_movie = False
 
     if save_movie:
-        import datetime
         current_datetime = datetime.datetime.now()
         timestamp_str = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
         fname_tot = f"data_{timestamp_str}.tiff"
@@ -651,32 +515,22 @@ def motion_correction_piecewise(lazy_dataset, splits, strides, overlaps, add_to_
     for idx in idxs:
         logging.debug('Processing: frames: {}'.format(idx))
         pars.append(
-            [lazy_dataset, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
+            [lazy_dataset, fname_tot, idx, template, strides, overlaps, max_shifts, np.array(
                 add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-             newoverlaps, newstrides, nonneg_movie, filter_kernel])
+             filter_kernel])
 
     split_constant = load_split_heuristic(dims[0], dims[1], T)
-    res = tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
+    res = _tile_and_correct_dataloader(pars, lazy_dataset, split_constant=split_constant, bigtiff=bigtiff)
     return fname_tot, res
 
 
-def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
+def _tile_and_correct_dataloader(param_list, lazy_dataset, split_constant=200, bigtiff=False) -> list[tuple]:
     """
-    Contains logic to load multiple chunks of data, register it to template, and return estimated shifts + local template info
-
-    Inputs:
-        param_list: tuple. Large tuple of parameters for performing registration on each chunk of data
-        split_constant: int. Number of frames we register at a time (to avoid GPU OOM errors)
-        bigtiff: Boolean. Indicates whether we save with bigtiff options or not
-    Returns:
-        results_list. List of tuples, one for each chunk of data which was processed. Each tuple contains:
-            1. shift_into. list of lists. Each nested list contains a np.ndarray of shape (2,) describing the xy shifts applied to each frame of the data
-            2. idxs. np.ndarray. Shape (T,) where T is the number of frames registered in this chunk of data
-            3. new_temp. np.ndarray. Shape (dim1, dim2) where dim1 and dim2 are height and length of FOV.
-
-    Side Effect: If specified, writes corrected frames to a tiff memmap file (name given by out_fname)
+    See _execute_motion_correction_iteration for details on what parameters this function uses to perform registration.
+    If specified, writes corrected frames to a tiff memmap file (name given by out_fname)
     """
     num_workers = 0
+    movie_shape = lazy_dataset.shape
     tile_and_correct_dataobj = tile_and_correct_dataset(param_list)
     loader_obj = torch.utils.data.DataLoader(tile_and_correct_dataobj, batch_size=1,
                                              shuffle=False, num_workers=num_workers, collate_fn=regular_collate,
@@ -687,13 +541,12 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
     memmap_placeholder = None
     for dataloader_index, data in enumerate(tqdm(loader_obj), 0):
         num_iters = math.ceil(data[0].shape[0] / split_constant)
-        imgs_net, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-            nonneg_movie, filter_kernel = data
+        imgs_net, mc, out_fname, idxs, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, \
+            filter_kernel = data
         if out_fname is not None:
-            inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
             if memmap_placeholder is None:
-                memmap_placeholder = tifffile.memmap(out_fname, shape=inferred_mov_shape, dtype=mc.dtype,
+                memmap_placeholder = tifffile.memmap(out_fname, shape=movie_shape, dtype=mc.dtype,
                                                      bigtiff=bigtiff)
         for j in range(num_iters):
 
@@ -705,24 +558,24 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
 
             if max_deviation_rigid == 0:
                 if filter_kernel is None:
-                    outs = tile_and_correct_rigid_vmap(imgs, template, max_shifts, add_to_movie)
+                    outs = register_frames_to_template_rigid(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_rigid_1p_vmap(imgs, imgs_filtered, template, max_shifts, add_to_movie)
+                    outs = register_frames_to_template_1p_rigid(imgs, imgs_filtered, template, max_shifts, add_to_movie)
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
             else:
                 if filter_kernel is None:
-                    outs = tile_and_correct_pwrigid_vmap(imgs, template, strides[0], strides[1], overlaps[0],
-                                                         overlaps[1], \
-                                                         max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                         add_to_movie)
+                    outs = register_frames_to_template_pwrigid(imgs, template, strides[0], strides[1], overlaps[0],
+                                                               overlaps[1], \
+                                                               max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                               add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = tile_and_correct_pwrigid_1p_vmap(imgs, imgs_filtered, template, strides[0], strides[1],
-                                                            overlaps[0], overlaps[1], \
-                                                            max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                            add_to_movie)
+                    outs = register_frames_to_template_1p_pwrigid(imgs, imgs_filtered, template, strides[0], strides[1],
+                                                                  overlaps[0], overlaps[1], \
+                                                                  max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                                  add_to_movie)
 
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
@@ -739,6 +592,10 @@ def tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False):
 
 
 class tile_and_correct_dataset():
+    """
+    Basic dataloading class for loading chunks of data. Written like this so that code can support prefetching from disk
+    """
+
     def __init__(self, param_list):
         self.param_list = param_list
 
@@ -746,19 +603,19 @@ class tile_and_correct_dataset():
         return len(self.param_list)
 
     def __getitem__(self, index):
-        lazy_dataset, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-            nonneg_movie, filter_kernel = self.param_list[index]
+        lazy_dataset, out_fname, idxs, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, \
+            filter_kernel = self.param_list[index]
 
         imgs = lazy_dataset[idxs, :, :]
         mc = np.zeros(imgs.shape, dtype=np.float32)
 
-        return imgs, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
-            add_to_movie, max_deviation_rigid, upsample_factor_grid, newoverlaps, newstrides, \
-            nonneg_movie, filter_kernel
+        return imgs, mc, out_fname, idxs, template, strides, overlaps, max_shifts, \
+            add_to_movie, max_deviation_rigid, upsample_factor_grid, \
+            filter_kernel
 
 
-def generate_template_chunk(arr, batch_size=250000):
+def generate_template_chunk(arr: np.ndarray, batch_size: int = 250000) -> np.ndarray:
     dim_1_step = int(math.sqrt(batch_size))
     dim_2_step = int(math.sqrt(batch_size))
 
@@ -779,7 +636,7 @@ def generate_template_chunk(arr, batch_size=250000):
 
 
 @partial(jit)
-def nan_processing(arr):
+def nan_processing(arr: ArrayLike) -> ArrayLike:
     p = jnp.nanmean(arr, 0)
     q = jnp.nanmin(p)
     r = jnp.nan_to_num(p, q)
@@ -790,20 +647,25 @@ def regular_collate(batch):
     return batch[0]
 
 
-def calculate_splits(T, splits) -> List:
-    '''
-    Heuristic for calculating splits
-    '''
-    step = T // splits
-    remainder = T % splits
+def calculate_splits(T: int, frames_per_split: int) -> list:
+    """
+    Function used to build a computation work plan for motion correction (decide which frames to run per split, etc.)
+    """
+    if frames_per_split <= 1:
+        raise ValueError("frames_per_split must be an integer greater than 1")
 
-    start = 0
+    start_point = list(range(0, T, frames_per_split))
+    if T - frames_per_split < start_point[-1] and len(start_point) > 1:
+        start_point[-1] = T - frames_per_split
+
     slice_list = []
-    for i in range(splits):
-        end = start + step + (1 if i < remainder else 0)
-        slice_list.append(slice(start, end))
-        start = end
+    start = 0
+    for k in range(len(start_point)):
+        end = min(T, start + frames_per_split)
+        slice_list.append(slice(start, end, 1))
+
     return slice_list
+
 
 def load_split_heuristic(d1, d2, T):
     '''
@@ -820,22 +682,16 @@ def load_split_heuristic(d1, d2, T):
     return min(T, new_T)
 
 
-def bin_median(mat, window=10, exclude_nans=True):
-    """ compute median of 3D array in along axis o by binning values
+def bin_median(mat: np.ndarray, window: int = 10, exclude_nans: bool = True):
+    """
+    Compute median of 3D array in along axis 0 by binning values
 
     Args:
-        mat: ndarray
-            input 3D matrix, time along first dimension
-
-        window: int
-            number of frames in a bin
+        mat (np.ndarray). Input 3D matrix, time along first dimension
+        window (int). Number of frames in a bin
 
     Returns:
-        img:
-            median image
-
-    Raises:
-        Exception 'Path to template does not exist:'+template
+        img (np.ndarray). Median image
     """
 
     T, d1, d2 = np.shape(mat)
@@ -859,43 +715,9 @@ def _upsampled_dft_full(data, upsampled_region_size, upsample_factor, axis_offse
 
 
 # @partial(jit, static_argnums=(1,))
-def _upsampled_dft_jax(data, upsampled_region_size,
-                       upsample_factor, axis_offsets):
+def _upsampled_dft_jax(data: ArrayLike, upsampled_region_size: int,
+                       upsample_factor: int, axis_offsets: ArrayLike) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
     Upsampled DFT by matrix multiplication.
 
     This code is intended to provide the same result as if the following
@@ -913,23 +735,16 @@ def _upsampled_dft_jax(data, upsampled_region_size,
     ``data.size * upsample_factor``.
 
     Args:
-        data : 2D array
-            The input data array (DFT of original data) to upsample.
-
-        upsampled_region_size : integer
-            The size of the region to be sampled.  If one integer is provided, it
+        data (jnp.array). The input data array (DFT of original data) to upsample.
+        upsampled_region_size (int). The size of the region to be sampled.  If one integer is provided, it
             is duplicated up to the dimensionality of ``data``.
-
-        upsample_factor : integer, optional
-            The upsampling factor.  Defaults to 1.
-
-        axis_offsets : tuple of integers, optional
+        upsample_factor (int). The upsampling factor for the DFT.
+        axis_offsets (jnp.array).
             The offsets of the region to be sampled.  Defaults to None (uses
             image center)
-
     Returns:
-        output : 2D ndarray
-                The upsampled DFT of the specified region.
+        output (jnp.array)
+            The upsampled DFT of the specified region.
     """
 
     # Calculate col_kernel
@@ -961,42 +776,8 @@ def _upsampled_dft_jax(data, upsampled_region_size,
 
 
 @partial(jit)
-def _upsampled_dft_jax_no_size(data, upsample_factor):
+def _upsampled_dft_jax_no_size(data: ArrayLike, upsample_factor: int) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
     Upsampled DFT by matrix multiplication.
 
     This code is intended to provide the same result as if the following
@@ -1014,23 +795,11 @@ def _upsampled_dft_jax_no_size(data, upsample_factor):
     ``data.size * upsample_factor``.
 
     Args:
-        data : 2D array
-            The input data array (DFT of original data) to upsample.
-
-        upsampled_region_size : integer
-            The size of the region to be sampled.  If one integer is provided, it
-            is duplicated up to the dimensionality of ``data``.
-
-        upsample_factor : integer, optional
-            The upsampling factor.  Defaults to 1.
-
-        axis_offsets : tuple of integers, optional
-            The offsets of the region to be sampled.  Defaults to None (uses
-            image center)
+        data (np.ndarray). The input data array (DFT of original data) to upsample.
+        upsample_factor (int). Upsampling factor
 
     Returns:
-        output : 2D ndarray
-                The upsampled DFT of the specified region.
+        output (ArrayLike)
     """
 
     upsampled_region_size = 1
@@ -1062,22 +831,24 @@ def _upsampled_dft_jax_no_size(data, upsample_factor):
     return output
 
 
-### CODE FOR REGISTER TRANSLATION FIRST CALL
-
 # @partial(jit)
-def _compute_phasediff(cross_correlation_max):
+def _compute_phasediff(cross_correlation_max: ArrayLike) -> ArrayLike:
     '''
     Compute global phase difference between the two images (should be zero if images are non-negative).
     Args:
-        cross_correlation_max : complex
-    The complex value of the cross correlation at its maximum point.
+        cross_correlation_max (complex)
+    Returns:
+        The complex value of the cross correlation at its maximum point.
     
     '''
     return jnp.angle(cross_correlation_max)
 
 
 # @partial(jit)
-def get_freq_comps_jax(src_image, target_image):
+def get_freq_comps_jax(src_image: ArrayLike, target_image: ArrayLike) -> tuple[ArrayLike]:
+    """
+    Routine to compute frequency components of two images
+    """
     src_image_cpx = jnp.complex64(src_image)
     target_image_cpx = jnp.complex64(target_image)
     src_freq = jnp.fft.fftn(src_image_cpx)
@@ -1088,7 +859,7 @@ def get_freq_comps_jax(src_image, target_image):
 
 
 # @partial(jit)
-def threshold_dim1(img, ind):
+def threshold_dim1(img: ArrayLike, ind: int) -> ArrayLike:
     a = img.shape[0]
 
     row_ind_first = jnp.arange(a) < ind
@@ -1101,7 +872,7 @@ def threshold_dim1(img, ind):
 
 
 # @partial(jit)
-def threshold_dim2(img, ind):
+def threshold_dim2(img: ArrayLike, ind: int) ->ArrayLike:
     b = img.shape[1]
 
     col_ind_first = jnp.arange(b) < ind
@@ -1124,97 +895,25 @@ def return_identity(a, b):
 
 
 # @partial(jit, static_argnums=(2,))
-def register_translation_jax_simple(src_image, target_image, upsample_factor, max_shifts=(10, 10)):
+def register_translation_jax_simple(src_image: ArrayLike, target_image: ArrayLike,
+                                    upsample_factor: int,
+                                    max_shifts: tuple[int, int] = (10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
-
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-    Efficient subpixel image translation registration by cross-correlation.
-
-    This code gives the same precision as the FFT upsampled cross-correlation
-    in a fraction of the computation time and with reduced memory requirements.
-    It obtains an initial estimate of the cross-correlation peak by an FFT and
-    then refines the shift estimation by upsampling the DFT only in a small
-    neighborhood of that estimate by means of a matrix-multiply DFT.
+    Finds optimal rigid shifts to register target_image (template) with src_image (input image). Negate
+        these shifts to get the optimal rigid transformation from src_image to template.
 
     Args:
-        src_image : ndarray
-            Reference image.
-
-        target_image : ndarray
-            Image to register.  Must be same dimensionality as ``src_image``.
-
-        upsample_factor : int, optional
-            Upsampling factor. Images will be registered to within
-            ``1 / upsample_factor`` of a pixel. For example
-            ``upsample_factor == 20`` means the images will be registered
-            within 1/20th of a pixel.  Default is 1 (no upsampling)
-
-        space : string, one of "real" or "fourier"
-            Defines how the algorithm interprets input data.  "real" means data
-            will be FFT'd to compute the correlation, while "fourier" data will
-            bypass FFT of input data.  Case insensitive.
+        src_image (np.ndarray). Input image
+        target_image (np.ndarray). Template. Must be same dimensionality as src_image
+        upsample_factor (int). Images will be registered to within 1 / upsample_factor of a pixel.
+        max_shifts (tuple). Tuple of two integers describing maximum rigid shift in each dimension
 
     Returns:
-        shifts : ndarray
-            Shift vector (in pixels) required to register ``target_image`` with
+        shifts (ndarray). Shift vector (in pixels) required to register ``target_image`` with
             ``src_image``.  Axis ordering is consistent with numpy (e.g. Z, Y, X)
-
-        error : float
-            Translation invariant normalized RMS error between ``src_image`` and
-            ``target_image``.
-
-        phasediff : float
-            Global phase difference between the two images (should be
+        sfr_freq (jnp.array). Frequency domain representation of src_image.
+        phasediff (jnp.array). Global phase difference between the two images (should be
             zero if images are non-negative).
-
-    Raises:
-     NotImplementedError "Error: register_translation only supports "
-                                  "subpixel registration for 2D images"
-
-     ValueError "Error: images must really be same size for "
-                         "register_translation"
-
-     ValueError "Error: register_translation only knows the \"real\" "
-                         "and \"fourier\" values for the ``space`` argument."
-
-    References:
-    .. [1] Manuel Guizar-Sicairos, Samuel T. Thurman, and James R. Fienup,
-           "Efficient subpixel image registration algorithms,"
-           Optics Letters 33, 156-158 (2008).
     """
 
     ##Now, must FFT the data:
@@ -1271,50 +970,10 @@ def register_translation_jax_simple(src_image, target_image, upsample_factor, ma
     shifts = shifts * shape_new
     return shifts, src_freq, _compute_phasediff(CCmax)
 
-
-### END OF CODE FOR REGISTER TRANSLATION FIRST CALL
-
-
-### START OF CODE FOR REGISTER TRANSLATION SECOND CALL
-
 # @partial(jit, static_argnums=(1,))
-def _upsampled_dft_jax_full(data, upsampled_region_size,
-                            upsample_factor, axis_offsets):
+def _upsampled_dft_jax_full(data: ArrayLike, upsampled_region_size: int,
+                            upsample_factor: int, axis_offsets: tuple[ArrayLike, ArrayLike]) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the scikit-image (http://scikit-image.org/) package.
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-
     Upsampled DFT by matrix multiplication.
 
     This code is intended to provide the same result as if the following
@@ -1332,23 +991,13 @@ def _upsampled_dft_jax_full(data, upsampled_region_size,
     ``data.size * upsample_factor``.
 
     Args:
-        data : 2D array
+        data (np.ndarray):
             The input data array (DFT of original data) to upsample.
-
-        upsampled_region_size : integer
-            The size of the region to be sampled.  If one integer is provided, it
-            is duplicated up to the dimensionality of ``data``.
-
-        upsample_factor : integer, optional
-            The upsampling factor.  Defaults to 1.
-
-        axis_offsets : tuple of integers, optional
-            The offsets of the region to be sampled.  Defaults to None (uses
-            image center)
-
+        upsampled_region_size (integer). The size of the region to be sampled
+        upsample_factor (int). The upsampling factor for registration.
+        axis_offsets (tuple). Offsets from the image to be sampled.
     Returns:
-        output : 2D ndarray
-                The upsampled DFT of the specified region.
+        output (jnp.ndarray). The upsampled DFT of the specified region.
     """
 
     # Calculate col_kernel
@@ -1356,7 +1005,6 @@ def _upsampled_dft_jax_full(data, upsampled_region_size,
     shifted = jnp.fft.ifftshift(jnp.arange(data.shape[1]))
     shifted = jnp.expand_dims(shifted, axis=1)
 
-    # ifftshift(np.arange(data.shape[1]))[:, None] - np.floor(old_div(data.shape[1], 2))
     term_A = shifted - jnp.floor(data.shape[1] / 2)
 
     term_B = jnp.expand_dims(jnp.arange(upsampled_region_size), axis=0) - axis_offsets[1]
@@ -1439,98 +1087,25 @@ def threshold_shifts_1_else(new_cross_corr, shift_ub, shift_lb):
 
 
 # @partial(jit, static_argnums=(2,))
-def register_translation_jax_full(src_image, target_image, upsample_factor, \
-                                  shifts_lb, shifts_ub, max_shifts=(10, 10)):
+def register_translation_jax_full(src_image: ArrayLike, target_image: ArrayLike, upsample_factor: int,
+                                  shifts_lb: ArrayLike,
+                                  shifts_ub: ArrayLike, max_shifts=(10, 10)) -> tuple[ArrayLike, ArrayLike, ArrayLike]:
     """
-
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
-    Efficient subpixel image translation registration by cross-correlation.
-
-    This code gives the same precision as the FFT upsampled cross-correlation
-    in a fraction of the computation time and with reduced memory requirements.
-    It obtains an initial estimate of the cross-correlation peak by an FFT and
-    then refines the shift estimation by upsampling the DFT only in a small
-    neighborhood of that estimate by means of a matrix-multiply DFT.
-
+    Estimates piecewise rigid shifts which would align target_image TO the src_image. Negate these to get shifts going
+    from src_image to target.
     Args:
-        src_image : ndarray
-            Reference image.
-
-        target_image : ndarray
-            Image to register.  Must be same dimensionality as ``src_image``.
-
-        upsample_factor : int, optional
-            Upsampling factor. Images will be registered to within
-            ``1 / upsample_factor`` of a pixel. For example
-            ``upsample_factor == 20`` means the images will be registered
-            within 1/20th of a pixel.  Default is 1 (no upsampling)
-
-        space : string, one of "real" or "fourier"
-            Defines how the algorithm interprets input data.  "real" means data
-            will be FFT'd to compute the correlation, while "fourier" data will
-            bypass FFT of input data.  Case insensitive.
+        src_image (np.ndarray). Input data/images.
+        target_image (np.ndarray). Template. Must have same shape as src_image.
+        upsample_factor (int). Upsampling which occurs to estimate the shifts
+        shifts_lb (ArrayLike). Lower bound on the shifts which can be applied at each subpatch.
+        shifts_ub (ArrayLike). Upper bound on the shifts which can be applied at each subpatch.
 
     Returns:
-        shifts : ndarray
-            Shift vector (in pixels) required to register ``target_image`` with
-            ``src_image``.  Axis ordering is consistent with numpy (e.g. Z, Y, X)
-
-        error : float
-            Translation invariant normalized RMS error between ``src_image`` and
-            ``target_image``.
-
-        phasediff : float
-            Global phase difference between the two images (should be
+        shifts (np.ndarray). Shift vector (in pixels) required to register ``target_image`` with
+            ``src_image``.
+        src_freq (jnp.array). Frequency domain representation of input image data.
+        phasediff (jnp.array). Float value, global phase difference between the two images (should be
             zero if images are non-negative).
-
-    Raises:
-     NotImplementedError "Error: register_translation only supports "
-                                  "subpixel registration for 2D images"
-
-     ValueError "Error: images must really be same size for "
-                         "register_translation"
-
-     ValueError "Error: register_translation only knows the \"real\" "
-                         "and \"fourier\" values for the ``space`` argument."
-
-    References:
-    .. [1] Manuel Guizar-Sicairos, Samuel T. Thurman, and James R. Fienup,
-           "Efficient subpixel image registration algorithms,"
-           Optics Letters 33, 156-158 (2008).
     """
 
     ##Now, must FFT the data:
@@ -1599,17 +1174,11 @@ def register_translation_jax_full(src_image, target_image, upsample_factor, \
 
 vmap_register_translation = vmap(register_translation_jax_full, in_axes=(0, 0, None, None, None, None))
 
-
-#########
-### apply_shifts function + helper code
-########
-
 @partial(jit)
 def update_src_freq_jax(src_freq):
     out = jnp.fft.fftn(src_freq)
     out_norm = jnp.divide(out, jnp.size(out))
     return jnp.complex128(out_norm)
-
 
 @partial(jit)
 def update_src_freq_identity(src_freq):
@@ -1642,49 +1211,18 @@ def floor_min(a, b):
 
 
 # @partial(jit)
-def apply_shifts_dft_fast_1(src_freq_in, shift_a, shift_b, diffphase):
+def apply_shifts_dft_fast_1(src_freq_in: ArrayLike, shift_a: ArrayLike,
+                            shift_b: ArrayLike, diffphase: ArrayLike) -> ArrayLike:
     """
-    adapted from SIMA (https://github.com/losonczylab) and the
-    scikit-image (http://scikit-image.org/) package.
-
-
-    Unless otherwise specified by LICENSE.txt files in individual
-    directories, all code is
-
-    Copyright (C) 2011, the scikit-image team
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-
-     1. Redistributions of source code must retain the above copyright
-        notice, this list of conditions and the following disclaimer.
-     2. Redistributions in binary form must reproduce the above copyright
-        notice, this list of conditions and the following disclaimer in
-        the documentation and/or other materials provided with the
-        distribution.
-     3. Neither the name of skimage nor the names of its contributors may be
-        used to endorse or promote products derived from this software without
-        specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-    IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-    INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-    STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
-    IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-    POSSIBILITY OF SUCH DAMAGE.
+    use the inverse dft to apply shifts
     Args:
-        apply shifts using inverse dft
-        src_freq: ndarray
-            if is_freq it is fourier transform image else original image
-        shifts: shifts to apply
-        diffphase: comes from the register_translation output
+        src_freq_in (jnp.array). Frequency domain representatio of an image
+        shift_a (jnp.array). One element, describing shift in dimension 1
+        shift_b (jnp.array). One element, describing shift in dimension 2
+        diffphase (jnp.array). Global phase difference; see register translation functions
+
+    Returns:
+        Shifted image
     """
 
     src_freq = jnp.complex64(src_freq_in)
@@ -1778,7 +1316,12 @@ def return_identity_mins(in_var, k):
 
 
 # @partial(jit, static_argnums=(4,))
-def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_movie):
+def _register_to_template_1p_rigid(img: ArrayLike, img_filtered: ArrayLike, template: ArrayLike,
+                                   max_shifts: tuple[int, int], add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Same as _register_to_template_rigid; only difference is that we align img_filtered (the
+    high-pass thresholded movie) to template, but we apply the compute shifts and apply those shifts to img.
+    """
     upsample_factor_fft = 10
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
     template = jnp.add(template, add_to_movie).astype(jnp.float32)
@@ -1795,11 +1338,26 @@ def tile_and_correct_rigid_1p(img, img_filtered, template, max_shifts, add_to_mo
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
 
-tile_and_correct_rigid_1p_vmap = jit(vmap(tile_and_correct_rigid_1p, in_axes=(0, 0, None, (None, None), None)))
+register_frames_to_template_1p_rigid = jit(
+    vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, (None, None), None)))
 
 
 # @partial(jit, static_argnums=(3,))
-def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
+def _register_to_template_rigid(img: ArrayLike, template: ArrayLike,
+                                max_shifts: ArrayLike, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Registers img to template, subject to constraint that max shift in either FOV dimension is bounded by values in
+    max_shifts.
+
+    Args:
+        img (jnp.array). Input image of interest.
+        template (jnp.array). Template image
+        max_shifts (jnp.array). Has 2 integers specifying max shift in both FOV dimensions
+        add_to_movie (jnp.array). Scalar value in jnp.array for adding to each frame.
+    Returns:
+        aligned: Aligned version of "img" to template.
+        shifts: Shifts which were applied to img.
+    """
     upsample_factor_fft = 10
 
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
@@ -1814,7 +1372,7 @@ def tile_and_correct_rigid(img, template, max_shifts, add_to_movie):
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
 
-tile_and_correct_rigid_vmap = jit(vmap(tile_and_correct_rigid, in_axes=(0, None, None, None)))
+register_frames_to_template_rigid = jit(vmap(_register_to_template_rigid, in_axes=(0, None, None, None)))
 
 
 @partial(jit, static_argnums=(1, 2, 3, 4))
@@ -1855,52 +1413,16 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
 
 
 # @partial(jit, static_argnums=(3,4,5,6,8))
-def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts,
-                                upsample_factor_fft, \
-                                max_deviation_rigid, add_to_movie):
-    """ perform piecewise rigid motion correction iteration, by
-        1) dividing the FOV in patches
-        2) motion correcting each patch separately
-        3) upsampling the motion correction vector field
-        4) stiching back together the corrected subpatches
-
-    Args:
-        img: ndaarray 2D
-            image to correct
-
-        template: ndarray
-            reference image
-
-        strides: tuple
-            strides of the patches in which the FOV is subdivided
-
-        overlaps: tuple
-            amount of pixel overlaping between patches along each dimension
-
-        max_shifts: tuple
-            max shifts in x and y
-
-        upsample_factor_grid: int
-            if newshapes or newstrides are not specified this is inferred upsampling by a constant factor the cvector field
-
-        upsample_factor_fft: int
-            resolution of fractional shifts
-
-        show_movie: boolean whether to visualize the original and corrected frame during motion correction
-
-        max_deviation_rigid: int
-            maximum deviation in shifts of each patch from the rigid shift (should not be large)
-
-        add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
-
-        filt_sig_size: tuple
-            standard deviation and size of gaussian filter to center filter data in case of one photon imaging data
-
-    Returns:
-        (new_img, total_shifts, start_step, xy_grid)
-            new_img: ndarray, corrected image
-
-
+def _register_to_template_1p_pwrigid(img: ArrayLike, img_filtered: ArrayLike,
+                                     template: ArrayLike, strides_0: int, strides_1: int, overlaps_0: int,
+                                     overlaps_1: int,
+                                     max_shifts: ArrayLike,
+                                     upsample_factor_fft: int,
+                                     max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    This is the same as _register_to_template_pwrigid; the only difference is that there is an extra
+    parameter, img_filtered, which is a high-pass thresholded version of img. We align that to template, and
+    apply the shifts to image to do the alignment. See _register_to_template_pwrigid for parameter info.
     """
     strides = [strides_0, strides_1]
     overlaps = [overlaps_0, overlaps_1]
@@ -1957,163 +1479,37 @@ def tile_and_correct_pwrigid_1p(img, img_filtered, template, strides_0, strides_
     return m_reg - add_to_movie, total_shifts
 
 
-tile_and_correct_pwrigid_1p_vmap = jit(
-    vmap(tile_and_correct_pwrigid_1p, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
+register_frames_to_template_1p_pwrigid = jit(
+    vmap(_register_to_template_1p_pwrigid, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(3, 4, 5, 6, 8))
 
-
-@partial(jit, static_argnums=(2, 3, 4, 5, 7))
-def tile_and_correct(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
-                     max_deviation_rigid, add_to_movie):
-    """ perform piecewise rigid motion correction iteration, by
-        1) dividing the FOV in patches
-        2) motion correcting each patch separately
-        3) upsampling the motion correction vector field
-        4) stiching back together the corrected subpatches
-
-    Args:
-        img: ndaarray 2D
-            image to correct
-
-        template: ndarray
-            reference image
-
-        strides: tuple
-            strides of the patches in which the FOV is subdivided
-
-        overlaps: tuple
-            amount of pixel overlaping between patches along each dimension
-
-        max_shifts: tuple
-            max shifts in x and y
-
-        upsample_factor_grid: int
-            if newshapes or newstrides are not specified this is inferred upsampling by a constant factor the cvector field
-
-        upsample_factor_fft: int
-            resolution of fractional shifts
-
-        show_movie: boolean whether to visualize the original and corrected frame during motion correction
-
-        max_deviation_rigid: int
-            maximum deviation in shifts of each patch from the rigid shift (should not be large)
-
-        add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
-
-        filt_sig_size: tuple
-            standard deviation and size of gaussian filter to center filter data in case of one photon imaging data
-
-    Returns:
-        (new_img, total_shifts, start_step, xy_grid)
-            new_img: ndarray, corrected image
-
-
-    """
-    strides = [strides_0, strides_1]
-    overlaps = [overlaps_0, overlaps_1]
-
-    img = jnp.array(img).astype(jnp.float32)
-    template = jnp.array(template).astype(jnp.float32)
-
-    img = img + add_to_movie
-    template = template + add_to_movie
-
-    # compute rigid shifts
-    rigid_shts, sfr_freq, diffphase = register_translation_jax_simple(
-        img, template, upsample_factor=upsample_factor_fft, max_shifts=max_shifts)
-
-    # extract patches
-
-    templates = get_patches_jax(template, overlaps[0], overlaps[1], strides[0], strides[1])
-    xy_grid = get_xy_grid(template, overlaps[0], overlaps[1], strides[0], strides[1])
-    imgs = get_patches_jax(img, overlaps[0], overlaps[1], strides[0], strides[1])
-    sum_0 = img.shape[0] - strides_0 - overlaps_0
-    sum_1 = img.shape[1] - strides_1 - overlaps_1
-    comp_a = sum_0 // strides_0 + 1 + (sum_0 % strides_0 > 0)
-    comp_b = sum_1 // strides_1 + 1 + (sum_1 % strides_1 > 0)
-    dim_grid = [comp_a, comp_b]
-    num_tiles = comp_a * comp_b
-
-    lb_shifts = jnp.ceil(jnp.subtract(
-        rigid_shts, max_deviation_rigid)).astype(jnp.int16)
-    ub_shifts = jnp.floor(
-        jnp.add(rigid_shts, max_deviation_rigid)).astype(jnp.int16)
-
-    # extract shifts for each patch
-    src_image_inputs = jnp.array(imgs)
-    target_image_inputs = jnp.array(templates)
-    shfts_et_all = vmap_register_translation(src_image_inputs, target_image_inputs, upsample_factor_fft, lb_shifts,
-                                             ub_shifts, max_shifts)
-
-    shift_img_y = jnp.reshape(jnp.array(shfts_et_all[0])[:, 1], dim_grid)
-    shift_img_x = jnp.reshape(jnp.array(shfts_et_all[0])[:, 0], dim_grid)
-    diffs_phase_grid = jnp.reshape(jnp.array(shfts_et_all[2]), dim_grid)
-
-    dims = img.shape
-
-    x_grid, y_grid = jnp.meshgrid(jnp.arange(0., img.shape[1]).astype(
-        jnp.float32), jnp.arange(0., img.shape[0]).astype(jnp.float32))
-
-    shift_img_x_r = shift_img_x.reshape(num_tiles)
-    shift_img_x_y = shift_img_y.reshape(num_tiles)
-    total_shifts = jnp.stack([shift_img_x_r, shift_img_x_y], axis=1) * -1
-    return img, shift_img_x, shift_img_y, x_grid, y_grid, total_shifts
-
-
-def opencv_interpolation(img, dims, shift_img_x, shift_img_y, x_grid, y_grid, add_value):
-    img = np.array(img)
-    shift_img_x = np.array(shift_img_x)
-    shift_img_y = np.array(shift_img_y)
-    x_grid = np.array(x_grid)
-    y_grid = np.array(y_grid)
-    m_reg = cv2.remap(img, cv2.resize(shift_img_y.astype(np.float32), dims[::-1]) + x_grid,
-                      cv2.resize(shift_img_x.astype(np.float32), dims[::-1]) + y_grid,
-                      cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-
-    return m_reg - add_value
-
-
-# Note that jax does not have higher-order spline implemented, eventually switch to that if it's actually the case that it leads to better outcomes
 # @partial(jit, static_argnums=(2,3,4,5,7))
-def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, overlaps_1, max_shifts, upsample_factor_fft, \
-                           max_deviation_rigid, add_to_movie):
-    """ perform piecewise rigid motion correction iteration, by
+def _register_to_template_pwrigid(img: ArrayLike, template: ArrayLike, strides_0: int, strides_1: int,
+                                  overlaps_0: int, overlaps_1: int, max_shifts: ArrayLike,
+                                  upsample_factor_fft: int,
+                                  max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """
+    Perform piecewise rigid motion correction iteration, by
         1) dividing the FOV in patches
         2) motion correcting each patch separately
         3) upsampling the motion correction vector field
         4) stiching back together the corrected subpatches
 
     Args:
-        img: ndaarray 2D
-            image to correct
-
-        template: ndarray
-            reference image
-
-        strides: tuple
-            strides of the patches in which the FOV is subdivided
-
-        overlaps: tuple
-            amount of pixel overlaping between patches along each dimension
-
-        max_shifts: tuple
-            max shifts in x and y
-
-        upsample_factor_grid: int
-            if newshapes or newstrides are not specified this is inferred upsampling by a constant factor the cvector field
-
-        upsample_factor_fft: int
-            resolution of fractional shifts
-
-        max_deviation_rigid: int
-            maximum deviation in shifts of each patch from the rigid shift (should not be large)
-
-        add_to_movie: if movie is too negative the correction might have some issues. In this case it is good to add values so that it is non negative most of the times
+        img (np.ndarray). image to correct
+        template (np.ndarray). The reference image
+        strides_0 (int). The strides of the patches in which the FOV is subdivided along dimension 0.
+        strides_1 (int). The strides of the patches in which the FOV is subdivided along dimension 1.
+        overlaps_0 (int). Tmount of pixel overlap between patches along dimension 0
+        overlaps_1 (int). Tmount of pixel overlap between patches along dimension 1
+        max_shifts (tuple). Max shifts in x and y
+        upsample_factor_fft (int). The resolution of fractional shifts
+        max_deviation_rigid (int). Maximum deviation in shifts of each patch from the rigid shift (should not be large)
+        add_to_movie (jnp.array). Constant offset to add to movie before registration to avoid negative values.
 
     Returns:
-        (new_img, total_shifts, start_step, xy_grid)
-            new_img: ndarray, corrected image
-
+        new_img (jnp,array). Registered movie
+        total_shifts (jnp.array). Shifts applied to each patch.
 
     """
     strides = [strides_0, strides_1]
@@ -2171,6 +1567,6 @@ def tile_and_correct_ideal(img, template, strides_0, strides_1, overlaps_0, over
     return m_reg - add_to_movie, total_shifts
 
 
-tile_and_correct_pwrigid_vmap = jit(
-    vmap(tile_and_correct_ideal, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
+register_frames_to_template_pwrigid = jit(
+    vmap(_register_to_template_pwrigid, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(2, 3, 4, 5, 7))

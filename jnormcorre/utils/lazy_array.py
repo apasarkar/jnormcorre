@@ -79,12 +79,12 @@ class lazy_data_loader(ABC):
                 if start > self.shape[0]:
                     raise IndexError(f"Cannot index beyond `n_frames`.\n"
                                      f"Desired frame start index of <{start}> "
-                                     f"lies beyond `n_frames` <{self.n_frames}>")
+                                     f"lies beyond `n_frames` <{self.shape[0]}>")
             if stop is not None:
                 if stop > self.shape[0]:
                     raise IndexError(f"Cannot index beyond `n_frames`.\n"
                                      f"Desired frame stop index of <{stop}> "
-                                     f"lies beyond `n_frames` <{self.n_frames}>")
+                                     f"lies beyond `n_frames` <{self.shape[0]}>")
 
             if step is None:
                 step = 1

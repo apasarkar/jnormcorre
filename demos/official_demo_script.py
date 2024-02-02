@@ -8,6 +8,10 @@ import tifffile
 
 from jnormcorre import motion_correction
 from jnormcorre.utils import registrationarrays
+from typing import *
+
+from jnormcorre.utils.lazy_array import lazy_data_loader
+
 
 def display(msg):
     """
@@ -18,27 +22,20 @@ def display(msg):
     sys.stdout.flush()
 
 
-'''
-dxy = (2., 2.),
-max_shift_um = (12., 12.),
-patch_motion_um = (100., 100.),
-'''
-
-
-def motion_correct(lazy_dataset,
-                   outdir,
-                   max_shifts,
-                   max_deviation_rigid=3,
-                   frames_per_split=1000,
-                   pw_rigid=True,
-                   strides=(30, 30),
-                   overlaps=(10, 10),
-                   niter_rig = 4,
-                   gSig_filt=None,
-                   save_movie=True,
-                   sketch_template=False,
-                   num_splits_to_process_els=None,
-                   num_splits_to_process_rig=None):
+def motion_correct_pipeline(lazy_dataset: lazy_data_loader,
+                            outdir: str,
+                            max_shifts: Tuple[int, int],
+                            max_deviation_rigid: int = 3,
+                            frames_per_split: int = 1000,
+                            num_splits_to_process_els: int = 5,
+                            num_splits_to_process_rig: int = 5,
+                            pw_rigid: bool = False,
+                            strides: Tuple[int, int] = (30, 30),
+                            overlaps: Tuple[int, int]=(10, 10),
+                            niter_rig: int = 4,
+                            gSig_filt: Tuple[float, float] = None,
+                            save_movie: bool = True,
+                            template: Optional[np.ndarray] = None):
     """
     Runs the full motion correction pipeline (with the option to do rigid and piecewise rigid registration after, if desired)
     Parameters
@@ -93,8 +90,6 @@ def motion_correct(lazy_dataset,
 
     min_mov: Float
         Indicates a known minimum value of the data, which is subtracted from frames before doing registration.
-    indices: default (slice(None), slice(None))
-        If one wants to register a spatial subset of the data, these indices "slice" the numpy ndarray data in the spatial dimensions accordingly.
 
     Returns
     -------
@@ -108,18 +103,11 @@ def motion_correct(lazy_dataset,
         This is path of the final filename. If save_movie was true, target_file will point to a new filename. If not, it won't.
     """
 
-
-
     mc_dict = {}
     mc_dict['upsample_factor_grid'] = 4  # This was reliably set to 4 in original method
 
     # Iteratively Run MC On Input File
     display("Running motion correction...")
-
-    total_frames = lazy_dataset.shape[0]
-    splits = math.ceil(total_frames/frames_per_split)
-    display("Number of chunks is {}".format(splits))
-
 
     mc_dict['strides'] = strides
     mc_dict['overlaps'] = overlaps
@@ -134,20 +122,16 @@ def motion_correct(lazy_dataset,
         mc_dict['pw_rigid'] = False
     mc_dict['niter_rig'] = niter_rig
 
-    if sketch_template:
-        mc_dict['num_splits_to_process_els'] = min(5,
-                                                   splits) if num_splits_to_process_els is None else num_splits_to_process_els
-        mc_dict['num_splits_to_process_rig'] = min(5,
-                                                   splits) if num_splits_to_process_rig is None else num_splits_to_process_rig
+    mc_dict['num_splits_to_process_els'] = num_splits_to_process_els
+    mc_dict['num_splits_to_process_rig'] = num_splits_to_process_rig
     mc_dict['gSig_filt'] = gSig_filt
-    mc_dict['splits_els'] = splits
-    mc_dict['splits_rig'] = splits
+    mc_dict['frames_per_split'] = frames_per_split
 
     corrector = motion_correction.MotionCorrect(lazy_dataset, **mc_dict)
 
     # Run MC, Always Saving Non-Final Outputs For Use In Next Iteration
     corrector_obj, target_file = corrector.motion_correct(
-        save_movie=save_movie
+        template=template, save_movie=save_movie
     )
 
     display("Motion correction completed.")
@@ -161,6 +145,7 @@ def motion_correct(lazy_dataset,
     display('Shifts saved as "shifts.npz".')
 
     return corrector_obj, target_file
+
 
 def main():
     filename = "../datasets/demoMovie.tif"
@@ -197,19 +182,14 @@ def main():
         strides = (30, 30)
         overlaps = (round(strides[0] / 4), round(strides[1] / 4))
 
-    registration_obj, registered_filename = motion_correct(lazy_dataset, ".", max_shifts,
-                                                           max_deviation_rigid=3,
-                                                           frames_per_split=1000,
-                                                           pw_rigid=pw_rigid,
-                                                           strides=strides,
-                                                           overlaps=overlaps,
-                                                           niter_rig=4,
-                                                           gSig_filt=None,
-                                                           save_movie=True,
-                                                           sketch_template=False,
-                                                           num_splits_to_process_els=None,
-                                                           num_splits_to_process_rig=None)
-
+    registration_obj, registered_filename = motion_correct_pipeline(lazy_dataset, ".", max_shifts,
+                                                                    max_deviation_rigid=3, frames_per_split=1000,
+                                                                    num_splits_to_process_els=5,
+                                                                    num_splits_to_process_rig=5,
+                                                                    pw_rigid=pw_rigid, strides=strides,
+                                                                    overlaps=overlaps, niter_rig=4, gSig_filt=None,
+                                                                    save_movie=True
+                                                                    )
 
 if __name__ == "__main__":
     main()
