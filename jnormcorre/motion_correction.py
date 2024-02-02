@@ -128,9 +128,6 @@ def verify_strides_and_overlaps(dim: int, stride: int, overlap: int) -> None:
             "The stride + overlap (i.e. overall patch size) should be less the length of this axis of the FOV. Right now, stride is {} and overlap is {} and the FOV axis length is {}. See documentation for more details.".format(
                 stride, overlap, dim))
 
-
-####### END OF PLACE IN FUNCTIONS #######
-
 class MotionCorrect(object):
     """
     class implementing motion correction operations
@@ -140,7 +137,7 @@ class MotionCorrect(object):
                  num_splits_to_process_rig: Optional[int] = None, niter_rig: int = 1, pw_rigid: bool = False,
                  strides: tuple[int, int] = (96, 96), overlaps: tuple[int, int] = (32, 32),
                  max_deviation_rigid: int = 3, splits_els: int = 14, num_splits_to_process_els: Optional[int] = None,
-                 niter_els: int = 1, min_mov: float = None, nonneg_movie: bool = True, upsample_factor_grid: int = 4,
+                 niter_els: int = 1, min_mov: float = None, upsample_factor_grid: int = 4,
                  gSig_filt: Optional[list[int]] = None, bigtiff: bool = False) -> None:
 
         """
@@ -160,13 +157,15 @@ class MotionCorrect(object):
             num_splits_to_process_els (int): Number of splits we process per iteration of pwrigid motion correction
             niter_els: Number of iterations of piecewise rigid registration
             min_mov (float). The minimum value of the movie, if known
-            nonneg_movie (bool): make the SAVED movie and template mostly nonnegative by removing min_mov from movie
             gSig_filt (list): List with 1 positive integer describing a Gaussian standard deviation. We use this to construct a kernel to
                 high-pass filter data which has large background contamination.
             bigtiff (bool): Indicates whether or not movie is saved as a bigtiff or regular tiff
         """
         if not isinstance(niter_els, int) or niter_els < 1:
-            raise ValueError(f"please provide n_iter as an int of 1 or higher.")
+            raise ValueError(f"please provide niter_els as an int of 1 or higher.")
+
+        if not isinstance(niter_rig, int) or niter_rig < 1:
+            raise ValueError(f"please provide niter_rig as an int of 1 or higher.")
 
         self.lazy_dataset = lazy_dataset
         self.max_shifts = max_shifts
@@ -181,7 +180,6 @@ class MotionCorrect(object):
         self.upsample_factor_grid = upsample_factor_grid
         self.max_deviation_rigid = max_deviation_rigid
         self.min_mov = min_mov
-        self.nonneg_movie = nonneg_movie
         self.pw_rigid = bool(pw_rigid)
         self.bigtiff = bigtiff
         self.file_FOV_dims = self.lazy_dataset.shape[1], self.lazy_dataset.shape[2]
@@ -266,7 +264,6 @@ class MotionCorrect(object):
             template=self.total_template_rig,
             save_movie_rigid=save_movie,
             add_to_movie=-self.min_mov,
-            nonneg_movie=self.nonneg_movie,
             filter_kernel=self.filter_kernel,
             bigtiff=self.bigtiff)
         if template is None:
@@ -307,7 +304,7 @@ class MotionCorrect(object):
             max_deviation_rigid=self.max_deviation_rigid, splits=self.splits_els,
             num_splits_to_process=self.num_splits_to_process_els, num_iter=num_iter,
             template=self.total_template_els,
-            save_movie=save_movie, nonneg_movie=self.nonneg_movie, filter_kernel=self.filter_kernel,
+            save_movie=save_movie, filter_kernel=self.filter_kernel,
             bigtiff=self.bigtiff)
 
         if np.isnan(np.sum(new_template_els)):
@@ -327,7 +324,7 @@ class MotionCorrect(object):
 def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tuple[int, int],
                                 splits: int = 56, num_splits_to_process: int = None, num_iter: int = 1,
                                 template: np.ndarray = None, save_movie_rigid: bool = False, add_to_movie: float = None,
-                                nonneg_movie: bool = False, filter_kernel: np.ndarray = None,
+                                filter_kernel: np.ndarray = None,
                                 bigtiff: bool = False) -> tuple[str, np.ndarray, list, list]:
     """
     Performs 1 pass of rigid motion correction; see the following functions for parameter details:
@@ -382,7 +379,7 @@ def _motion_correct_batch_rigid(lazy_dataset: lazy_data_loader, max_shifts: tupl
                                                                       add_to_movie=add_to_movie, template=old_templ,
                                                                       max_shifts=max_shifts, max_deviation_rigid=0,
                                                                       save_movie=save_flag, num_splits=num_splits_to_process,
-                                                                      nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
+                                                                      filter_kernel=filter_kernel,
                                                                       bigtiff=bigtiff)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
@@ -406,7 +403,7 @@ def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tu
                                   upsample_factor_grid: int = 4, max_deviation_rigid: int = 3,
                                   splits: int = 56, num_splits_to_process: Optional[int] = None, num_iter: int = 1,
                                   template: Optional[np.ndarray] = None, save_movie: bool = False,
-                                  nonneg_movie: bool = False, filter_kernel: Optional[np.ndarray] = None,
+                                  filter_kernel: Optional[np.ndarray] = None,
                                   bigtiff=False) -> tuple[str, np.ndarray, list, list, list, list, list]:
     """
     Performs 1 pass of piecewise rigid motion correction; see the following functions for parameter details:
@@ -452,7 +449,7 @@ def _motion_correct_batch_pwrigid(lazy_dataset: lazy_data_loader, max_shifts: tu
                                                                      upsample_factor_grid=upsample_factor_grid,
                                                                      save_movie=save_flag,
                                                                      num_splits=num_splits_to_process,
-                                                                     nonneg_movie=nonneg_movie, filter_kernel=filter_kernel,
+                                                                     filter_kernel=filter_kernel,
                                                                      bigtiff=bigtiff)
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
@@ -483,7 +480,7 @@ def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits:
                                          max_shifts: tuple[int, int] = (12, 12), max_deviation_rigid: int = 3,
                                          upsample_factor_grid: int = 4,
                                          save_movie: bool = True, num_splits: Optional[int] = None,
-                                         nonneg_movie:int = False, filter_kernel: np.ndarray = None,
+                                         filter_kernel: np.ndarray = None,
                                          bigtiff: bool = False) -> tuple[str, list[tuple]]:
     """
     Executes a single iteration of motion correction. See the following functions for details:
@@ -528,7 +525,7 @@ def _execute_motion_correction_iteration(lazy_dataset: lazy_data_loader, splits:
         pars.append(
             [lazy_dataset, fname_tot, idx, shape_mov, template, strides, overlaps, max_shifts, np.array(
                 add_to_movie, dtype=np.float32), max_deviation_rigid, upsample_factor_grid,
-             nonneg_movie, filter_kernel])
+                filter_kernel])
 
     split_constant = load_split_heuristic(dims[0], dims[1], T)
     res = _tile_and_correct_dataloader(pars, split_constant=split_constant, bigtiff=bigtiff)
@@ -553,7 +550,7 @@ def _tile_and_correct_dataloader(param_list, split_constant=200, bigtiff=False) 
         num_iters = math.ceil(data[0].shape[0] / split_constant)
         imgs_net, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
             add_to_movie, max_deviation_rigid, upsample_factor_grid, \
-            nonneg_movie, filter_kernel = data
+            filter_kernel = data
         if out_fname is not None:
             inferred_mov_shape = (shape_mov[1], imgs_net.shape[1], mc.shape[2])
             if memmap_placeholder is None:
@@ -612,14 +609,14 @@ class tile_and_correct_dataset():
     def __getitem__(self, index):
         lazy_dataset, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
             add_to_movie, max_deviation_rigid, upsample_factor_grid, \
-            nonneg_movie, filter_kernel = self.param_list[index]
+            filter_kernel = self.param_list[index]
 
         imgs = lazy_dataset[idxs, :, :]
         mc = np.zeros(imgs.shape, dtype=np.float32)
 
         return imgs, mc, out_fname, idxs, shape_mov, template, strides, overlaps, max_shifts, \
             add_to_movie, max_deviation_rigid, upsample_factor_grid,\
-            nonneg_movie, filter_kernel
+            filter_kernel
 
 
 def generate_template_chunk(arr, batch_size=250000):
