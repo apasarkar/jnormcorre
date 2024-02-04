@@ -581,7 +581,7 @@ def _tile_and_correct_dataloader(param_list, lazy_dataset, split_constant=200, b
                 shift_info.extend([[k] for k in np.array(outs[1])])
 
         if out_fname is not None:
-            memmap_placeholder[start_pt_save:start_pt_save + mc.shape[0], :, :] = mc
+            memmap_placeholder[idxs, :, :] = mc
             start_pt_save += mc.shape[0]
             memmap_placeholder.flush()
         new_temp = generate_template_chunk(mc)
@@ -659,8 +659,8 @@ def calculate_splits(T: int, frames_per_split: int) -> list:
         start_point[-1] = T - frames_per_split
 
     slice_list = []
-    start = 0
     for k in range(len(start_point)):
+        start = start_point[k]
         end = min(T, start + frames_per_split)
         slice_list.append(slice(start, end, 1))
 
