@@ -42,8 +42,8 @@ class frame_corrector():
             strides (Tuple): Two integers, used to specify patch dimensions for pwrigid registration
             overlaps (Tuple): Overlap b/w patches. strides[i] + overlaps[i] are the patch size dimensions.
             max_deviation_rigid (int): Specifies max number of pixels a patch can deviate from the rigid shifts.
-            min_mov (float). The minimum value of the movie, if known.
-            batching (int). Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
+            min_mov (float): The minimum value of the movie, if known.
+            batching (int): Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
         """
         self.template = template
         self.max_shifts = max_shifts
@@ -98,10 +98,16 @@ class frame_corrector():
 
     @property
     def rigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        """
+        The rigid registration function of this frame correction object
+        """
         return self.jitted_rigid_method
 
     @property
     def pwrigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        """
+        The piecewise rigid registration function of this frame correction object
+         """
         return self.jitted_pwrigid_method
 
 
@@ -197,8 +203,7 @@ class MotionCorrect(object):
 
         Args:
             template (ndarray): Template provided by user for motion correction default
-            save_movie (bool):
-                flag for saving motion corrected file(s) as memory mapped file(s)
+            save_movie (bool): Flag for saving motion corrected file(s) as memory mapped file(s)
 
         Returns:
             frame_corrector_obj (jnormcorre.motion_correction.frame_corrector): Object for applying frame correction
