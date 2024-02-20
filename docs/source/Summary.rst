@@ -46,7 +46,7 @@ Here are some of the common use cases/features supported by jnormcorre.
                                                     max_deviation_rigid, min_mov=0)
 
     #Run registration on your_data
-    registration_obj.register_frames(your_data, pw_rigid=pw_rigid)
+    frame_corrector_object.register_frames(your_data, pw_rigid=pw_rigid)
 
 - **Real-time alignment**:
     You have a good template and want to align data to this template in real time.
