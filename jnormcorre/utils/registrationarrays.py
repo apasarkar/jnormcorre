@@ -1,3 +1,4 @@
+import jnormcorre.motion_correction
 from jnormcorre.utils.lazy_array import lazy_data_loader
 import tifffile
 import numpy as np
@@ -8,6 +9,13 @@ from typing import *
 class TiffArray(lazy_data_loader):
 
     def __init__(self, filename):
+        """
+        TiffArray data loading object. Supports loading data from multipage tiff files.
+
+        Args:
+            filename (str): Path to file
+
+        """
         self.filename = filename
 
     @property
@@ -50,10 +58,14 @@ class TiffArray(lazy_data_loader):
 
 class Hdf5Array(lazy_data_loader):
 
-    def __init__(self, filename, field):
+    def __init__(self, filename: str, field: str) -> None:
         """
-        Generic lazy loader for Hdf5 files video files, where data is stored as (T, x, y). T is num frames
+        Generic lazy loader for Hdf5 files video files, where data is stored as (T, x, y). T is number of frames,
         x and y are the field of view dimensions (height and width).
+
+        Args:
+            filename (str): Path to filename
+            field (str): Field of hdf5 file containing data
         """
         if not isinstance(field, str):
             raise ValueError("Field must be a string")
@@ -102,16 +114,15 @@ class Hdf5Array(lazy_data_loader):
         return data.astype(self.dtype)
 
 class RegistrationArray(lazy_data_loader):
-    '''
-    Class for registering 2D functional imaging data. Constructor:
-    (1) registration_obj. This is a general registration class which takes "n" frames, via a ndarray of shape (n, x, y) where (x, y) is the
-        FOV dimension and outputs (n, x, y), the registered set of frames to a given template
-    (2) data_loader. This is a class for lazy-loading data on disk. It supports the usual __getitem__ interface
+    def __init__(self, registration_obj: jnormcorre.motion_correction.frame_corrector,
+                 data_loader: jnormcorre.utils.lazy_array.lazy_data_loader):
+        """
+        Class for registering 2D functional imaging data on the fly. Useful for visualization libraries etc.
 
-    With these two key pieces, motion_corrector
-    '''
-
-    def __init__(self, registration_obj, data_loader):
+        Args:
+            registration_obj (jnormcorre.motion_correction.frame_corrector). Object which can perform registration
+            data_loader (jnormcorre.utils.lazy_array.lazy_data_loader). Data loading object
+        """
         self.data_loader = data_loader
         self.registration_obj = registration_obj
         # Verify that the data and registration info align properly

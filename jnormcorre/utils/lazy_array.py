@@ -16,8 +16,7 @@ class lazy_data_loader(ABC):
     @abstractmethod
     def dtype(self) -> str:
         """
-        str
-            data type
+        data type
         """
         pass
 
@@ -25,16 +24,14 @@ class lazy_data_loader(ABC):
     @abstractmethod
     def shape(self) -> Tuple[int, int, int]:
         """
-        Tuple[int]
-            (n_frames, dims_x, dims_y)
+        Array shape (n_frames, dims_x, dims_y)
         """
         pass
 
     @property
     def ndim(self) -> int:
         """
-        int
-            Number of dimensions
+        Number of dimensions
         """
         return len(self.shape)
 
@@ -111,7 +108,7 @@ class lazy_data_loader(ABC):
     @abstractmethod
     def _compute_at_indices(self, indices: Union[int, slice]) -> np.ndarray:
         """
-        Lazy computation logic goes here. Computes the array at the desired indices.
+        Lazy computation logic goes here to return frames. Slices the array over time (dimension 0) at the desired indices.
 
         Parameters
         ----------

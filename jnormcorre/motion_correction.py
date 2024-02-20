@@ -42,8 +42,8 @@ class frame_corrector():
             strides (Tuple): Two integers, used to specify patch dimensions for pwrigid registration
             overlaps (Tuple): Overlap b/w patches. strides[i] + overlaps[i] are the patch size dimensions.
             max_deviation_rigid (int): Specifies max number of pixels a patch can deviate from the rigid shifts.
-            min_mov (float). The minimum value of the movie, if known.
-            batching (int). Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
+            min_mov (float): The minimum value of the movie, if known.
+            batching (int): Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
         """
         self.template = template
         self.max_shifts = max_shifts
@@ -98,10 +98,16 @@ class frame_corrector():
 
     @property
     def rigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        """
+        The rigid registration function of this frame correction object
+        """
         return self.jitted_rigid_method
 
     @property
     def pwrigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
+        """
+        The piecewise rigid registration function of this frame correction object
+         """
         return self.jitted_pwrigid_method
 
 
@@ -197,8 +203,7 @@ class MotionCorrect(object):
 
         Args:
             template (ndarray): Template provided by user for motion correction default
-            save_movie (bool):
-                flag for saving motion corrected file(s) as memory mapped file(s)
+            save_movie (bool): Flag for saving motion corrected file(s) as memory mapped file(s)
 
         Returns:
             frame_corrector_obj (jnormcorre.motion_correction.frame_corrector): Object for applying frame correction
@@ -1341,6 +1346,23 @@ def _register_to_template_1p_rigid(img: ArrayLike, img_filtered: ArrayLike, temp
 register_frames_to_template_1p_rigid = jit(
     vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, (None, None), None)))
 
+register_frames_to_template_1p_rigid_docs = \
+    """
+    Performs rigid registration of a series of frames to a single template for 1p data. 
+    
+    Args:
+        img (np.array): Shape (T, x, y), frames we want to register.  T is number of frames, x and y are spatial dims
+        img_filtered (np.array). Shape (T, x, y), a high-pass filtered version of imgs. This is used to compute shifts relative to the template.
+        template (np.array): Shape (x, y). Template image
+        max_shifts (np.array): Has 2 integers specifying max shift in both FOV dimensions
+        add_to_movie (np.array): Scalar value in jnp.array for adding to each frame.
+
+    Returns:
+        aligned (jnp.array): Shape (T, x, y). Aligned version of "img" to template.
+        shifts (jnp.array): Shifts which were applied to img.
+    """
+register_frames_to_template_1p_rigid.__doc__ = register_frames_to_template_1p_rigid_docs
+
 
 # @partial(jit, static_argnums=(3,))
 def _register_to_template_rigid(img: ArrayLike, template: ArrayLike,
@@ -1350,13 +1372,13 @@ def _register_to_template_rigid(img: ArrayLike, template: ArrayLike,
     max_shifts.
 
     Args:
-        img (jnp.array). Input image of interest.
-        template (jnp.array). Template image
-        max_shifts (jnp.array). Has 2 integers specifying max shift in both FOV dimensions
-        add_to_movie (jnp.array). Scalar value in jnp.array for adding to each frame.
+        img (jnp.array): Input image of interest.
+        template (jnp.array): Template image
+        max_shifts (jnp.array): Has 2 integers specifying max shift in both FOV dimensions
+        add_to_movie (jnp.array): Scalar value in jnp.array for adding to each frame.
     Returns:
-        aligned: Aligned version of "img" to template.
-        shifts: Shifts which were applied to img.
+        aligned (jnp.array): Aligned version of "img" to template.
+        shifts (jnp.array): Shifts which were applied to img.
     """
     upsample_factor_fft = 10
 
@@ -1374,6 +1396,21 @@ def _register_to_template_rigid(img: ArrayLike, template: ArrayLike,
 
 register_frames_to_template_rigid = jit(vmap(_register_to_template_rigid, in_axes=(0, None, None, None)))
 
+register_frames_to_template_rigid_docs = \
+    """
+    Performs rigid registration of a series of frames to a single template. 
+    
+    Args:
+        img (jnp.array): Shape (T, x, y), frames we want to register.  T is number of frames, x and y are spatial dims
+        template (jnp.array): Shape (x, y). Template image
+        max_shifts (jnp.array): Has 2 integers specifying max shift in both FOV dimensions
+        add_to_movie (jnp.array): Scalar value in jnp.array for adding to each frame.
+        
+    Returns:
+        aligned (jnp.array): Aligned version of "img" to template.
+        shifts (jnp.array): Shifts which were applied to img.
+    """
+register_frames_to_template_rigid.__doc__ = register_frames_to_template_rigid_docs
 
 @partial(jit, static_argnums=(1, 2, 3, 4))
 def get_indices(img, overlaps_0, overlaps_1, strides_0, strides_1):
@@ -1483,33 +1520,65 @@ register_frames_to_template_1p_pwrigid = jit(
     vmap(_register_to_template_1p_pwrigid, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(3, 4, 5, 6, 8))
 
+register_frames_to_template_1p_pwrigid_docs = \
+    """
+    Perform piecewise rigid motion correction on 1p data by
+    (1) dividing the FOV in patches
+    (2) motion correcting each patch separately
+    (3) upsampling the motion correction vector field
+    (4) stiching back together the corrected subpatches 
+    
+    Args:
+        img (np.ndarray): Shape (T, x, y) Frames to register to template. T is number of frames, x and y spatial dims
+        imgs_filtered (np.ndarray). Shape (T, x, y). Spatially high-pass filtered version of img
+        template (np.ndarray): Shape (x, y). The reference image
+        strides_0 (int): The strides of the patches in which the FOV is subdivided along dimension 0.
+        strides_1 (int): The strides of the patches in which the FOV is subdivided along dimension 1.
+        overlaps_0 (int): Amount of pixel overlap between patches along dimension 0
+        overlaps_1 (int): Amount of pixel overlap between patches along dimension 1
+        max_shifts (tuple): Max shifts in x and y
+        upsample_factor_fft (int): The resolution of fractional shifts
+        max_deviation_rigid (int): Maximum deviation in shifts of each patch from the rigid shift (should not be large)
+        add_to_movie (np.array): Constant offset to add to movie before registration to avoid negative values.
+    
+    Returns:
+        new_img (jnp.array): Shape (T, x, y), motion corrected version of img. 
+        total_shifts (jnp.array): Shifts applied to each patch.
+    
+    """
+
+register_frames_to_template_1p_pwrigid.__doc__ = register_frames_to_template_1p_pwrigid_docs
+
+
+
+
 # @partial(jit, static_argnums=(2,3,4,5,7))
 def _register_to_template_pwrigid(img: ArrayLike, template: ArrayLike, strides_0: int, strides_1: int,
                                   overlaps_0: int, overlaps_1: int, max_shifts: ArrayLike,
                                   upsample_factor_fft: int,
                                   max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
     """
-    Perform piecewise rigid motion correction iteration, by
-        1) dividing the FOV in patches
-        2) motion correcting each patch separately
-        3) upsampling the motion correction vector field
-        4) stiching back together the corrected subpatches
+    Perform piecewise rigid motion correction iteration by
+    (1) dividing the FOV in patches
+    (2) motion correcting each patch separately
+    (3) upsampling the motion correction vector field
+    (4) stiching back together the corrected subpatches
 
     Args:
-        img (np.ndarray). image to correct
-        template (np.ndarray). The reference image
-        strides_0 (int). The strides of the patches in which the FOV is subdivided along dimension 0.
-        strides_1 (int). The strides of the patches in which the FOV is subdivided along dimension 1.
-        overlaps_0 (int). Tmount of pixel overlap between patches along dimension 0
-        overlaps_1 (int). Tmount of pixel overlap between patches along dimension 1
-        max_shifts (tuple). Max shifts in x and y
-        upsample_factor_fft (int). The resolution of fractional shifts
-        max_deviation_rigid (int). Maximum deviation in shifts of each patch from the rigid shift (should not be large)
-        add_to_movie (jnp.array). Constant offset to add to movie before registration to avoid negative values.
+        img (np.ndarray): image to correct
+        template (np.ndarray): The reference image
+        strides_0 (int): The strides of the patches in which the FOV is subdivided along dimension 0.
+        strides_1 (int): The strides of the patches in which the FOV is subdivided along dimension 1.
+        overlaps_0 (int): Amount of pixel overlap between patches along dimension 0
+        overlaps_1 (int): Amount of pixel overlap between patches along dimension 1
+        max_shifts (tuple): Max shifts in x and y
+        upsample_factor_fft (int): The resolution of fractional shifts
+        max_deviation_rigid (int): Maximum deviation in shifts of each patch from the rigid shift (should not be large)
+        add_to_movie (jnp.array): Constant offset to add to movie before registration to avoid negative values.
 
     Returns:
-        new_img (jnp,array). Registered movie
-        total_shifts (jnp.array). Shifts applied to each patch.
+        new_img (jnp,array): Registered movie
+        total_shifts (jnp.array): Shifts applied to each patch.
 
     """
     strides = [strides_0, strides_1]
@@ -1570,3 +1639,31 @@ def _register_to_template_pwrigid(img: ArrayLike, template: ArrayLike, strides_0
 register_frames_to_template_pwrigid = jit(
     vmap(_register_to_template_pwrigid, in_axes=(0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(2, 3, 4, 5, 7))
+
+register_frames_to_template_pwrigid_docs = \
+    """
+    Perform piecewise rigid motion correction iteration by
+    (1) dividing the FOV in patches
+    (2) motion correcting each patch separately
+    (3) upsampling the motion correction vector field
+    (4) stiching back together the corrected subpatches
+    
+    Args:
+        img (np.ndarray): Shape (T, x, y) Frames to register to template. T is number of frames, x and y spatial dims
+        template (np.ndarray): Shape (x, y). The reference image
+        strides_0 (int): The strides of the patches in which the FOV is subdivided along dimension 0.
+        strides_1 (int): The strides of the patches in which the FOV is subdivided along dimension 1.
+        overlaps_0 (int): Amount of pixel overlap between patches along dimension 0
+        overlaps_1 (int): Amount of pixel overlap between patches along dimension 1
+        max_shifts (tuple): Max shifts in x and y
+        upsample_factor_fft (int): The resolution of fractional shifts
+        max_deviation_rigid (int): Maximum deviation in shifts of each patch from the rigid shift (should not be large)
+        add_to_movie (np.array): Constant offset to add to movie before registration to avoid negative values.
+    
+    Returns:
+        new_img (jnp.array): Shape (T, x, y), motion corrected version of img. 
+        total_shifts (jnp.array): Shifts applied to each patch.
+    
+    """
+
+register_frames_to_template_pwrigid.__doc__ = register_frames_to_template_pwrigid_docs
