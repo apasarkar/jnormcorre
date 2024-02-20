@@ -30,7 +30,10 @@ extensions = [
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '.ipynb_checkpoints/*', ]
-
+napoleon_google_docstring = True
+napoleon_numpy_docstring = False
+napoleon_use_rtype = False
+napoleon_custom_sections = [('Returns', 'params_style')]
 
 source_suffix = '.rst'
 

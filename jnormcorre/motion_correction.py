@@ -1359,7 +1359,7 @@ register_frames_to_template_1p_rigid_docs = \
 
     Returns:
         aligned (jnp.array): Shape (T, x, y). Aligned version of "img" to template.
-        shifts (jnp.array): Shifts which were applied to img.
+        shifts (jnp.array): Shape (T, 2). Row i describes dimension 1 and dimension 2 shifts applied to ith frame.
     """
 register_frames_to_template_1p_rigid.__doc__ = register_frames_to_template_1p_rigid_docs
 
@@ -1407,8 +1407,8 @@ register_frames_to_template_rigid_docs = \
         add_to_movie (jnp.array): Scalar value in jnp.array for adding to each frame.
         
     Returns:
-        aligned (jnp.array): Aligned version of "img" to template.
-        shifts (jnp.array): Shifts which were applied to img.
+        aligned (jnp.array): Shape (T, x, y).  Aligned version of "img" to template.
+        shifts (jnp.array): Shape (T, 2). Row i describes dimension 1 and dimension 2 shifts applied to ith frame
     """
 register_frames_to_template_rigid.__doc__ = register_frames_to_template_rigid_docs
 
@@ -1543,8 +1543,21 @@ register_frames_to_template_1p_pwrigid_docs = \
     
     Returns:
         new_img (jnp.array): Shape (T, x, y), motion corrected version of img. 
-        total_shifts (jnp.array): Shifts applied to each patch.
+        total_shifts (jnp.array): Shape (T, num_patches, 2). For the i-th frame, we apply shifts to "num_patches" different patches. See below for more info.
+            
+    In general, the coordinates of the k-th patch corresponding to total_shifts[i, k, :] are given this code
+        
+    .. code-block:: python
     
+        from jnormcorre import motion_correction
+        start, end = motion_correction.get_patch_start_and_end_coords(x, y, strides_0, strides_1, 
+                    overlaps_0, overlaps_1)
+        
+    They can be used as follows:
+    
+    .. code-block:: python
+    
+        img_i[start[0]:end[0], start[1]:end[1]]
     """
 
 register_frames_to_template_1p_pwrigid.__doc__ = register_frames_to_template_1p_pwrigid_docs
@@ -1646,7 +1659,7 @@ register_frames_to_template_pwrigid_docs = \
     (1) dividing the FOV in patches
     (2) motion correcting each patch separately
     (3) upsampling the motion correction vector field
-    (4) stiching back together the corrected subpatches
+    (4) stitching back together the corrected subpatches
     
     Args:
         img (np.ndarray): Shape (T, x, y) Frames to register to template. T is number of frames, x and y spatial dims
@@ -1662,8 +1675,50 @@ register_frames_to_template_pwrigid_docs = \
     
     Returns:
         new_img (jnp.array): Shape (T, x, y), motion corrected version of img. 
-        total_shifts (jnp.array): Shifts applied to each patch.
+        total_shifts (jnp.array): Shape (T, num_patches, 2). For the i-th frame, we apply shifts to "num_patches" different patches. See below for more info.
+            
+    In general, the coordinates of the k-th patch corresponding to total_shifts[i, k, :] are given this code
+        
+    .. code-block:: python
     
+        from jnormcorre import motion_correction
+        start, end = motion_correction.get_patch_start_and_end_coords(x, y, strides_0, strides_1, 
+                    overlaps_0, overlaps_1)
+        
+    They can be used as follows:
+    
+    .. code-block:: python
+    
+        img_i[start[0]:end[0], start[1]:end[1]]
     """
+def get_patch_start_and_end_coords(x, y, strides_0, strides_1, overlaps_0, overlaps_1):
+    """
+    When we run piecewise motion correction, we partition the FOV into overlapping patches, perform rigid alignment
+    between these patches and the corresponding patches of the template. Piecewise rigid MC returns the rigid shifts
+    for each of these patches. This function is a convenient way to access the top left and bottom right coordinates
+    for each patch.
+
+    Args:
+        x (int): First python dimension of FOV
+        y (int): Second python dimension of FOV
+        strides_0 (int): Patch stride in first dimension
+        strides_1 (int): Patch stride in second dimension
+        overlaps_0 (int): Patch overlaps in first dimension
+        overlaps_1 (int): Patch overlaps in second dimension
+
+    Returns:
+        start_points (np.ndarray): Shape (num_patches, 2). Each row is the top left coordinates of each patch.
+        end_points (np.ndarray): Shape (num_patches, 2). Each row is the bottom right coordinates of a single patch.
+
+    Intended Usage of outputs:
+        img[start_points[0]:end_points[0], start_points[1]:end_points[1]] will give you the patch used here.
+    """
+    first_dim, second_dim = get_indices(np.zeros((x, y)), overlaps_0, overlaps_1, strides_0, strides_1)
+    start_points = np.array(jnp.meshgrid(first_dim, second_dim)).T.reshape((-1, 2))
+    added_ind = np.array([strides_0 + overlaps_0, strides_1 + overlaps_1]).astype(np.int32)
+    end_points = start_points + added_ind[None, :]
+
+    return start_points, end_points
+
 
 register_frames_to_template_pwrigid.__doc__ = register_frames_to_template_pwrigid_docs
