@@ -11,7 +11,7 @@ build:
     python: "3.9"
   jobs:
     pre_build:
-      - sphinx-apidoc -o source/ ../jnormcorre
+      - sphinx-apidoc -o /docs/source/ .
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
