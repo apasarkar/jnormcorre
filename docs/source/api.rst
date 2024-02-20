@@ -16,11 +16,34 @@ MotionCorrect Class
 .. autoclass:: jnormcorre.motion_correction.MotionCorrect
     :members: __init__, motion_correct
 
+Rigid Motion Correction Function
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autofunction:: jnormcorre.motion_correction.register_frames_to_template_rigid
+
+.. autofunction:: jnormcorre.motion_correction.register_frames_to_template_1p_rigid
+
+.. autofunction:: jnormcorre.motion_correction.register_frames_to_template_pwrigid
+
+.. autofunction:: jnormcorre.motion_correction.register_frames_to_template_1p_pwrigid
+
+
 jnormcorre.utils.lazy_array API
 --------------------------------
 
 .. autoclass:: jnormcorre.utils.lazy_array.lazy_data_loader
    :members:
+   :show-inheritance:
+
+   .. automethod:: dtype
+
+   .. automethod:: shape
+
+   .. automethod:: ndim
+
+   .. automethod:: _compute_at_indices
+
+   .. automethod:: __getitem__
 
 jnormcorre.utils.registrationarrays
 -----------------------------------
