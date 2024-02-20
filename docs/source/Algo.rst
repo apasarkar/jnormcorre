@@ -22,7 +22,7 @@ normcorre, illustrated by the following diagram:
     to get an updated global template.
 
 Steps 1 - 3 are repeated iteratively across the frames of the movie.
-In the end-to-end pipeline (using the jnormcorre.motion_correction.MotionCorrect object) we do steps 1 - 3 a few times with rigid motion correction
+In the end-to-end pipeline (using the :class:`~jnormcorre.motion_correction.MotionCorrect` object) we do steps 1 - 3 a few times with rigid motion correction
 and then afterwards with piecewise rigid motion correction.
 
 
@@ -67,6 +67,7 @@ suppressing the background (see below figure).
 Supported Data Formats
 ======================
 This repo supports 2D imaging videos (Frames, X, Y).
-Any data loader which implements the simple "lazy_array" interface; see (jnormcorre.utils.lazy_array).
+Any data loader which implements the simple "lazy_array" interface; see :class:`~jnormcorre.utils.lazy_array.lazy_data_loader`.
 works here. This is really a basic array-like interface, so numpy arrays, etc. are automatically
-compatible. Tiff and HDF5 files are also currently supported; see (jnormcorre.utils.registrationarrays).
+compatible. Tiff and HDF5 files are also currently supported; see (:class:`~jnormcorre.utils.registrationarrays`).
+Contributions for further data format support are welcome.
