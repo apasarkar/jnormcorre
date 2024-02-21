@@ -3,7 +3,7 @@ This is a Jax-accelerated implementation of the normcorre motion correction algo
 It allows you to motion correct neuroimaging data (calcium, voltage imaging, etc.) 
 as fast as possible on GPUs/TPUs (also works well on CPUs).
 
-See the following documentation for algorithm/parameter details, common use cases, and API info.  
+See the following [documentation](https://jnormcorre.readthedocs.io/en/latest/) for algorithm/parameter details, common use cases, and API info.
 
 ## Citations
 
