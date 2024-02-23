@@ -39,7 +39,10 @@ class lazy_data_loader(ABC):
             self,
             item: Union[int, Tuple[Union[int, slice, range]]]
     ):
-        if isinstance(item, int):
+        if isinstance(item, list):
+            return self._compute_at_indices(item)
+
+        elif isinstance(item, int):
             indexer = item
 
         # numpy int scaler
@@ -60,8 +63,8 @@ class lazy_data_loader(ABC):
 
             indexer = item[0]
 
-        elif isinstance(item, list):
-            indexer = item
+
+
 
         else:
             raise IndexError(
