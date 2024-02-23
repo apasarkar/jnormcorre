@@ -118,7 +118,7 @@ class lazy_data_loader(ABC):
 
         Parameters
         ----------
-        indices: Union[int, slice]
+        indices: Union[list, int, slice]
             the user's desired way of picking frames, either an int, list of ints, or slice
              i.e. slice object or int passed from `__getitem__()`
 
