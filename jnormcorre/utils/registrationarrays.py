@@ -47,9 +47,11 @@ class TiffArray(lazy_data_loader):
         """
         return len(self.shape)
 
-    def _compute_at_indices(self, indices: Union[int, slice]) -> np.ndarray:
+    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         if isinstance(indices, int):
             data = tifffile.imread(self.filename, key=[indices]).squeeze()
+        elif isinstance(indices, list):
+            data = tifffile.imread(self.filename, key=indices).squeeze()
         else:
             indices_list = list(range(indices.start or 0, indices.stop or self.shape[0], indices.step or 1))
             data = tifffile.imread(self.filename, key=indices_list).squeeze()
@@ -102,11 +104,13 @@ class Hdf5Array(lazy_data_loader):
         """
         return len(self.shape)
 
-    def _compute_at_indices(self, indices: Union[int, slice]) -> np.ndarray:
+    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         with h5py.File(self.filename, 'r') as file:
             # Access the 'field' dataset
             field_dataset = file[self.field]
             if isinstance(indices, int):
+                data = field_dataset[indices, :, :].squeeze()
+            elif isinstance(indices, list):
                 data = field_dataset[indices, :, :].squeeze()
             else:
                 indices_list = list(range(indices.start or 0, indices.stop or self.shape[0], indices.step or 1))

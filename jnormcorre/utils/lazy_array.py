@@ -60,9 +60,12 @@ class lazy_data_loader(ABC):
 
             indexer = item[0]
 
+        elif isinstance(item, list):
+            indexer = item
+
         else:
             raise IndexError(
-                f"You can index LazyArrays only using slice, int, or tuple of slice and int, "
+                f"Invalid indexing method, "
                 f"you have passed a: <{type(item)}>"
             )
 
@@ -106,14 +109,15 @@ class lazy_data_loader(ABC):
             return self._compute_at_indices(indexer)
 
     @abstractmethod
-    def _compute_at_indices(self, indices: Union[int, slice]) -> np.ndarray:
+    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         """
         Lazy computation logic goes here to return frames. Slices the array over time (dimension 0) at the desired indices.
 
         Parameters
         ----------
         indices: Union[int, slice]
-            the user's desired slice, i.e. slice object or int passed from `__getitem__()`
+            the user's desired way of picking frames, either an int, list of ints, or slice
+             i.e. slice object or int passed from `__getitem__()`
 
         Returns
         -------
