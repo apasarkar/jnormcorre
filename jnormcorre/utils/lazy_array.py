@@ -37,7 +37,7 @@ class lazy_data_loader(ABC):
 
     def __getitem__(
             self,
-            item: Union[int, Tuple[Union[int, slice, range]]]
+            item: Union[int, list, Tuple[Union[int, slice, range]]]
     ):
         if isinstance(item, list):
             return self._compute_at_indices(item)
