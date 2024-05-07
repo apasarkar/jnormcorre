@@ -632,7 +632,7 @@ def generate_template_chunk(arr: np.ndarray, batch_size: int = 250000) -> np.nda
         for j in range(dim2_net_iters):
             start_dim1 = k * dim_1_step
             end_dim1 = min(start_dim1 + dim_1_step, arr.shape[1])
-            start_dim2 = k * dim_2_step
+            start_dim2 = j * dim_2_step
             end_dim2 = min(start_dim2 + dim_2_step, arr.shape[2])
             total_output[start_dim1:end_dim1, start_dim2:end_dim2] = nan_processing(
                 arr[:, start_dim1:end_dim1, start_dim2:end_dim2])
