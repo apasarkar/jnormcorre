@@ -117,6 +117,7 @@ class Hdf5Array(lazy_data_loader):
                 data = field_dataset[indices_list, :, :].squeeze()
         return data.astype(self.dtype)
 
+
 class RegistrationArray(lazy_data_loader):
     def __init__(self, registration_obj: jnormcorre.motion_correction.frame_corrector,
                  data_loader: jnormcorre.utils.lazy_array.lazy_data_loader):
@@ -149,15 +150,12 @@ class RegistrationArray(lazy_data_loader):
     def ndim(self):
         return self.data_loader.ndim
 
-    def _compute_at_indices(self):
-        pass
+    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
 
-    def __getitem__(
-            self,
-            item: Union[int, Tuple[Union[int, slice, range]]]
-    ):
-        frames = self.data_loader[item]
-        if len(frames.shape) == 2:  # This means we just loaded 1 frame
+        #Use data loader to load the frames
+        frames = self.data_loader[indices, :, :]
+        if len(frames.shape) == 2:  #This means we loaded 1 frame only
             frames = frames[None, :, :]
 
-        return self.registration_obj.register_frames(frames).astype(self.dtype).squeeze()
+        #Register the data
+        return self.registration_obj.register_frames(frames).squeeze()

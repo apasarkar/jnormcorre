@@ -37,46 +37,41 @@ class lazy_data_loader(ABC):
 
     def __getitem__(
             self,
-            item: Union[int, list, Tuple[Union[int, slice, range]]]
+            item: Union[int, list, np.ndarray, Tuple[Union[int, np.ndarray, slice, range]]]
     ):
-        if isinstance(item, list):
-            return self._compute_at_indices(item)
+        # Step 1: index the frames (dimension 0)
 
-        elif isinstance(item, int):
-            indexer = item
-
-        # numpy int scaler
-        elif isinstance(item, np.integer):
-            indexer = item.item()
-
-        # treat slice and range the same
-        elif isinstance(item, (slice, range)):
-            indexer = item
-
-        elif isinstance(item, tuple):
+        if isinstance(item, tuple):
             if len(item) > len(self.shape):
                 raise IndexError(
                     f"Cannot index more dimensions than exist in the array. "
                     f"You have tried to index with <{len(item)}> dimensions, "
                     f"only <{len(self.shape)}> dimensions exist in the array"
                 )
-
-            indexer = item[0]
-
-
-
-
+            frame_indexer = item[0]
         else:
-            raise IndexError(
-                f"Invalid indexing method, "
-                f"you have passed a: <{type(item)}>"
-            )
+            frame_indexer = item
+
+        # Step 2: Do some basic error handling for frame_indexer before using it to slice
+
+        if isinstance(frame_indexer, np.ndarray):
+            frame_indexer = frame_indexer.tolist()
+
+        if isinstance(frame_indexer, list):
+            pass
+
+        elif isinstance(frame_indexer, int):
+            pass
+
+        # numpy int scaler
+        elif isinstance(frame_indexer, np.integer):
+            frame_indexer = frame_indexer.item()
 
         # treat slice and range the same
-        if isinstance(indexer, (slice, range)):
-            start = indexer.start
-            stop = indexer.stop
-            step = indexer.step
+        elif isinstance(frame_indexer, (slice, range)):
+            start = frame_indexer.start
+            stop = frame_indexer.stop
+            step = frame_indexer.step
 
             if start is not None:
                 if start > self.shape[0]:
@@ -93,23 +88,27 @@ class lazy_data_loader(ABC):
                 step = 1
 
             # convert indexer to slice if it was a range, allows things like decord.VideoReader slicing
-            indexer = slice(start, stop, step)  # in case it was a range object
+            frame_indexer = slice(start, stop, step)  # in case it was a range object
 
-            # dimension_0 is always time
-            frames = self._compute_at_indices(indexer)
+        else:
+            raise IndexError(
+                f"Invalid indexing method, "
+                f"you have passed a: <{type(item)}>"
+            )
 
-            # index the remaining dims after lazy computing the frame(s)
-            if isinstance(item, tuple):
-                if len(item) == 2:
-                    return frames[:, item[1]]
-                elif len(item) == 3:
-                    return frames[:, item[1], item[2]]
+        # Step 3: Now slice the data with frame_indexer (careful: if the ndims has shrunk, add a dim)
+        frames = self._compute_at_indices(frame_indexer)
+        if len(frames.shape) < len(self.shape):
+            frames = np.expand_dims(frames, axis=0)
 
-            else:
-                return frames
+        # Step 4: Deal with remaining indices after lazy computing the frame(s)
+        if isinstance(item, tuple):
+            if len(item) == 2:
+                frames = frames[:, item[1]]
+            elif len(item) == 3:
+                frames = frames[:, item[1], item[2]]
 
-        elif isinstance(indexer, int):
-            return self._compute_at_indices(indexer)
+        return frames.squeeze()
 
     @abstractmethod
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
