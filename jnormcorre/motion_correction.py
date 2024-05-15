@@ -57,7 +57,7 @@ class frame_corrector():
         self.strides = strides
         self.overlaps = overlaps
         self.max_deviation_rigid = max_deviation_rigid
-        self.batching = batching
+        self._batching = batching
 
         # Set the pwrigid function
         self.pw_registration_method = jit(
@@ -90,12 +90,26 @@ class frame_corrector():
         Returns:
             corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
         """
-        if pw_rigid:
-            output = self.jitted_pwrigid_method(frames)
-        else:
-            output = self.jitted_rigid_method(frames)
+        output = np.zeros_like(frames)
+        batches = list(range(0, output.shape[0], self.batching))
+        if len(batches) > 1:
+            batches[-1] = output.shape[0] - self.batching
+
+        used_callable = self.jitted_pwrigid_method if pw_rigid else self.jitted_rigid_method
+        for start in batches:
+            end_point = min(start + self.batching, output.shape[0])
+            output[start:end_point, :, :] = np.array(used_callable(frames[start:end_point, :, :]))
+       
         return np.array(output)
 
+    @property
+    def batching(self):
+        return self._batching
+
+    @batching.setter
+    def batching(self, new_batch: int):
+        self._batching = new_batch
+    
     @property
     def rigid_function(self) -> Callable[[np.ndarray], ArrayLike]:
         """
