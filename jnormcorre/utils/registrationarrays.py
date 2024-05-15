@@ -150,6 +150,14 @@ class RegistrationArray(lazy_data_loader):
     def ndim(self):
         return self.data_loader.ndim
 
+    @property
+    def batching(self):
+        return self.registration_obj.batching
+
+    @batching.setter
+    def batching(self, new_batch: int):
+        self.registration_obj.batching = new_batch
+
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
 
         #Use data loader to load the frames
