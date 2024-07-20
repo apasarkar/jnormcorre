@@ -1358,7 +1358,7 @@ def _register_to_template_1p_rigid(img: ArrayLike, img_filtered: ArrayLike, temp
 
 
 register_frames_to_template_1p_rigid = jit(
-    vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, (None, None), None)))
+    vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, None, None)))
 
 register_frames_to_template_1p_rigid_docs = \
     """
