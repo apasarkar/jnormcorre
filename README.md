@@ -13,15 +13,13 @@ If you use this method, please cite the accompanying [paper](https://www.biorxiv
 
 
 ## Installation
-Currently, this code is supported for Linux operating systems with python version at least 3.8. We primarily use [JAX](https://github.com/google/jax) for fast CPU/GPU/TPU execution and Just-In-Time compilation; see the Google installation instructions on how to install the appropriate version of JAX and JAXLIB for your specific hardware system. We require: 
+Currently, this code is supported for Linux operating systems with python version at least 3.8. 
+We primarily use [JAX](https://github.com/google/jax) for fast CPU/GPU/TPU execution and 
+Just-In-Time compilation; see the Google installation instructions on how to install the appropriate version of 
+JAX - it is strongly recommended to install the most up-to-date version.
 
-```
-python>=3.8
-jax>=0.3.25
-jaxlib>=0.3.25
-```
+Right now, the best way to install jnormcorre is directly from the github repo, like this:
 
-To install this repository into your python environment from the source code, do the following (this approach is recommended for now): 
 ```
 #Step 1: Install the appropriate version of jax for your hardware system 
 
