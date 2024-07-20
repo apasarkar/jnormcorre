@@ -120,16 +120,18 @@ class Hdf5Array(lazy_data_loader):
 
 class RegistrationArray(lazy_data_loader):
     def __init__(self, registration_obj: jnormcorre.motion_correction.frame_corrector,
-                 data_loader: jnormcorre.utils.lazy_array.lazy_data_loader):
+                 data_loader: jnormcorre.utils.lazy_array.lazy_data_loader, pw_rigid = False):
         """
         Class for registering 2D functional imaging data on the fly. Useful for visualization libraries etc.
 
         Args:
-            registration_obj (jnormcorre.motion_correction.frame_corrector). Object which can perform registration
-            data_loader (jnormcorre.utils.lazy_array.lazy_data_loader). Data loading object
+            registration_obj (jnormcorre.motion_correction.frame_corrector): Object which can perform registration
+            data_loader (jnormcorre.utils.lazy_array.lazy_data_loader): Data loading object
+            pw_rigid (bool): Indicates whether we apply rigid or piecewise rigid registration to frames
         """
         self.data_loader = data_loader
         self.registration_obj = registration_obj
+        self._pw_rigid = pw_rigid
         # Verify that the data and registration info align properly
         dim1_match = data_loader.shape[1] == registration_obj.template.shape[0]
         dim2_match = data_loader.shape[2] == registration_obj.template.shape[1]
@@ -166,4 +168,4 @@ class RegistrationArray(lazy_data_loader):
             frames = frames[None, :, :]
 
         #Register the data
-        return self.registration_obj.register_frames(frames).squeeze()
+        return self.registration_obj.register_frames(frames, pw_rigid = self._pw_rigid).squeeze()

@@ -85,7 +85,7 @@ class frame_corrector():
 
         Args:
             frames (np.ndarray): dimensions (T, d1, d2), where T is the number of frames and d1, d2 are FOV dims
-            pwrigid (bool): Indicates whether we do piecewise rigid or rigid registration. Defaults to rigid.
+            pw_rigid (bool): Indicates whether we do piecewise rigid or rigid registration. Defaults to rigid.
 
         Returns:
             corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
