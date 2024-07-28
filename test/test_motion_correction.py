@@ -263,9 +263,9 @@ class Test_mc:
             template = mc.total_template_els
         else:
             template = mc.total_template_rig
-        registration_object = jnormcorre.motion_correction.frame_corrector(template, mc.max_shifts,
-                                                                           mc.strides, mc.overlaps,
-                                                                           mc.max_deviation_rigid, min_mov=mc.min_mov)
+        registration_object = jnormcorre.motion_correction.FrameCorrector(template, mc.max_shifts,
+                                                                          mc.strides, mc.overlaps,
+                                                                          mc.max_deviation_rigid, min_mov=mc.min_mov)
 
         registered_data = registration_object.register_frames(saved_dataset)
         #Verify that the registration object gives you the same results as the

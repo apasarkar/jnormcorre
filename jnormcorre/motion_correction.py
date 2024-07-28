@@ -26,7 +26,7 @@ from functools import partial
 import random
 
 
-class frame_corrector():
+class FrameCorrector:
     def __init__(self, template: np.ndarray,
                  max_shifts: Tuple[int, int], strides: Tuple[int, int],
                  overlaps: Tuple[int, int], max_deviation_rigid: int,
@@ -212,7 +212,7 @@ class MotionCorrect(object):
             self.filter_kernel = None
 
     def motion_correct(self, template: Optional[np.ndarray] = None,
-                       save_movie: Optional[bool] = False) -> tuple[frame_corrector, str]:
+                       save_movie: Optional[bool] = False) -> tuple[FrameCorrector, str]:
         """General driver function which performs motion correction
 
         Args:
@@ -255,9 +255,9 @@ class MotionCorrect(object):
             template = self.total_template_els
         else:
             template = self.total_template_rig
-        frame_correction_obj = frame_corrector(template, self.max_shifts,
-                                               self.strides, self.overlaps,
-                                               self.max_deviation_rigid, min_mov=self.min_mov)
+        frame_correction_obj = FrameCorrector(template, self.max_shifts,
+                                              self.strides, self.overlaps,
+                                              self.max_deviation_rigid, min_mov=self.min_mov)
         return frame_correction_obj, self.target_file
 
     def _motion_correct_rigid(self, template: Optional[np.ndarray] = None,

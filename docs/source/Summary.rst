@@ -23,8 +23,8 @@ Here are some of the common use cases/features supported by jnormcorre.
 
 
 .. code-block:: console
-
-    corrector = jnormcorre.motion_correction.MotionCorrect(lazy_dataset, max_shifts=max_shifts, frames_per_split=frames_per_split,
+    import jnormcorre as jnc
+    corrector = jnc.MotionCorrect(lazy_dataset, max_shifts=max_shifts, frames_per_split=frames_per_split,
                                                     num_splits_to_process_rig=num_splits_to_process_rig,
                                                     niter_rig=niter_rig, pw_rigid=pw_rigid, strides=strides,
                                                     overlaps=overlaps, max_deviation_rigid=max_deviation_rigid,
@@ -41,9 +41,10 @@ Here are some of the common use cases/features supported by jnormcorre.
 .. code-block:: console
 
     #Construct registration object with your template
-    frame_corrector_object = jnormcorre.motion_correction.frame_corrector(template, max_shifts,
-                                            strides=strides, overlaps=overlaps,
-                                                    max_deviation_rigid, min_mov=0)
+    import jnormcorre as jnc
+    frame_corrector_object = jnc.FrameCorrector(template, max_shifts,
+                                            strides, overlaps,
+                                            max_deviation_rigid, min_mov=0)
 
     #Run registration on your_data
     frame_corrector_object.register_frames(your_data, pw_rigid=pw_rigid)

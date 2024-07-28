@@ -4,13 +4,13 @@ import numpy as np
 
 
 class lazy_data_loader(ABC):
-    '''
+    """
     This captures the numpy array-like functionality that all data loaders for motion correction need to contain
 
     Key: To implement support for a new file type, you just need to specify the key properties below (dtype, shape, ndim)
     and then implement the function _compute_at_indices.
     Adapted from mesmerize core: https://github.com/nel-lab/mesmerize-core/blob/master/mesmerize_core/arrays/_base.py
-    '''
+    """
 
     @property
     @abstractmethod
