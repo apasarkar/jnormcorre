@@ -580,7 +580,7 @@ def _tile_and_correct_dataloader(param_list, lazy_dataset, split_constant=200, b
                     outs = register_frames_to_template_rigid(imgs, template, max_shifts, add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = register_frames_to_template_1p_rigid(imgs, imgs_filtered, template, max_shifts, add_to_movie)
+                    outs = register_to_template_and_transfer_rigid(imgs, imgs_filtered, template, max_shifts, add_to_movie)
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
             else:
@@ -591,10 +591,10 @@ def _tile_and_correct_dataloader(param_list, lazy_dataset, split_constant=200, b
                                                                add_to_movie)
                 else:
                     imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = register_frames_to_template_1p_pwrigid(imgs, imgs_filtered, template, strides[0], strides[1],
-                                                                  overlaps[0], overlaps[1], \
-                                                                  max_shifts, upsample_factor_fft, max_deviation_rigid,
-                                                                  add_to_movie)
+                    outs = register_to_template_and_transfer_pwrigid(imgs, imgs_filtered, template, strides[0], strides[1],
+                                                                     overlaps[0], overlaps[1], \
+                                                                     max_shifts, upsample_factor_fft, max_deviation_rigid,
+                                                                     add_to_movie)
 
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
@@ -1335,11 +1335,12 @@ def return_identity_mins(in_var, k):
 
 
 # @partial(jit, static_argnums=(4,))
-def _register_to_template_1p_rigid(img: ArrayLike, img_filtered: ArrayLike, template: ArrayLike,
-                                   max_shifts: tuple[int, int], add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+def _register_to_template_and_transfer_rigid(img: ArrayLike, img_filtered: ArrayLike, template: ArrayLike,
+                                             max_shifts: tuple[int, int], add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
     """
-    Same as _register_to_template_rigid; only difference is that we align img_filtered (the
-    high-pass thresholded movie) to template, but we apply the compute shifts and apply those shifts to img.
+    Here we estimate the rigid shifts that optimally align `img_filtered` and `template`; then we apply those shifts
+    to img. This can be used in the 1p imaging context as follows: register the high-pass filtered movie to its template,
+    and apply the shifts back to the raw 1p data.
     """
     upsample_factor_fft = 10
     img = jnp.add(img, add_to_movie).astype(jnp.float32)
@@ -1357,12 +1358,14 @@ def _register_to_template_1p_rigid(img: ArrayLike, img_filtered: ArrayLike, temp
     return new_img - add_to_movie, jnp.array([-rigid_shts[0], -rigid_shts[1]])
 
 
-register_frames_to_template_1p_rigid = jit(
-    vmap(_register_to_template_1p_rigid, in_axes=(0, 0, None, None, None)))
+register_to_template_and_transfer_rigid = jit(
+    vmap(_register_to_template_and_transfer_rigid, in_axes=(0, 0, None, None, None)))
 
-register_frames_to_template_1p_rigid_docs = \
+register_to_template_and_transfer_rigid_docs = \
     """
-    Performs rigid registration of a series of frames to a single template for 1p data. 
+    This routine estimates the shifts needed to align one image stack (img_filtered) to a `template`, and applies 
+    those estimated shifts to img. This can be very useful for dual color imaging, 1p calcium imaging, and many other
+    use cases. 
     
     Args:
         img (np.array): Shape (T, x, y), frames we want to register.  T is number of frames, x and y are spatial dims
@@ -1375,7 +1378,7 @@ register_frames_to_template_1p_rigid_docs = \
         aligned (jnp.array): Shape (T, x, y). Aligned version of "img" to template.
         shifts (jnp.array): Shape (T, 2). Row i describes dimension 1 and dimension 2 shifts applied to ith frame.
     """
-register_frames_to_template_1p_rigid.__doc__ = register_frames_to_template_1p_rigid_docs
+register_to_template_and_transfer_rigid.__doc__ = register_to_template_and_transfer_rigid_docs
 
 
 # @partial(jit, static_argnums=(3,))
@@ -1464,16 +1467,17 @@ def get_xy_grid(img, overlaps_0, overlaps_1, strides_0, strides_1):
 
 
 # @partial(jit, static_argnums=(3,4,5,6,8))
-def _register_to_template_1p_pwrigid(img: ArrayLike, img_filtered: ArrayLike,
-                                     template: ArrayLike, strides_0: int, strides_1: int, overlaps_0: int,
-                                     overlaps_1: int,
-                                     max_shifts: ArrayLike,
-                                     upsample_factor_fft: int,
-                                     max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+def _register_to_template_and_transfer_pwrigid(img: ArrayLike, img_filtered: ArrayLike,
+                                               template: ArrayLike, strides_0: int, strides_1: int, overlaps_0: int,
+                                               overlaps_1: int,
+                                               max_shifts: ArrayLike,
+                                               upsample_factor_fft: int,
+                                               max_deviation_rigid: int, add_to_movie: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
     """
-    This is the same as _register_to_template_pwrigid; the only difference is that there is an extra
-    parameter, img_filtered, which is a high-pass thresholded version of img. We align that to template, and
-    apply the shifts to image to do the alignment. See _register_to_template_pwrigid for parameter info.
+    Here we estimate the piecewise rigid shifts needed to optimally align `img_filtered` to `template`.
+    Then we apply those estimated shifts to `img`. This is useful in the context of 1p imaging, where
+    we might want to estimated shifts from a high-pass filtered movie, or in dual color imaging, where we
+    might want to use a brighter channel to estimate shifts that we apply to a dimmer one.
     """
     strides = [strides_0, strides_1]
     overlaps = [overlaps_0, overlaps_1]
@@ -1530,12 +1534,17 @@ def _register_to_template_1p_pwrigid(img: ArrayLike, img_filtered: ArrayLike,
     return m_reg - add_to_movie, total_shifts
 
 
-register_frames_to_template_1p_pwrigid = jit(
-    vmap(_register_to_template_1p_pwrigid, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
+register_to_template_and_transfer_pwrigid = jit(
+    vmap(_register_to_template_and_transfer_pwrigid, in_axes=(0, 0, None, None, None, None, None, None, None, None, None)), \
     static_argnums=(3, 4, 5, 6, 8))
 
-register_frames_to_template_1p_pwrigid_docs = \
+register_to_template_and_transfer_pwrigid_docs = \
     """
+    Here we estimate the piecewise rigid shifts needed to optimally align the image stack `imgs_filtered` to `template`.
+    Then we apply those estimated shifts to the image stack`img`. This is useful in the context of 1p imaging, where
+    we might want to estimated shifts from a high-pass filtered movie, or in dual color imaging, where we
+    might want to use a brighter channel to estimate shifts that we apply to a dimmer one.
+    
     Perform piecewise rigid motion correction on 1p data by
     (1) dividing the FOV in patches
     (2) motion correcting each patch separately
@@ -1574,7 +1583,7 @@ register_frames_to_template_1p_pwrigid_docs = \
         img_i[start[0]:end[0], start[1]:end[1]]
     """
 
-register_frames_to_template_1p_pwrigid.__doc__ = register_frames_to_template_1p_pwrigid_docs
+register_to_template_and_transfer_pwrigid.__doc__ = register_to_template_and_transfer_pwrigid_docs
 
 
 
