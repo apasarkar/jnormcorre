@@ -7,7 +7,6 @@ from typing import *
 
 
 class TiffArray(lazy_data_loader):
-
     def __init__(self, filename):
         """
         TiffArray data loading object. Supports loading data from multipage tiff files.
@@ -53,13 +52,16 @@ class TiffArray(lazy_data_loader):
         elif isinstance(indices, list):
             data = tifffile.imread(self.filename, key=indices).squeeze()
         else:
-            indices_list = list(range(indices.start or 0, indices.stop or self.shape[0], indices.step or 1))
+            indices_list = list(
+                range(
+                    indices.start or 0, indices.stop or self.shape[0], indices.step or 1
+                )
+            )
             data = tifffile.imread(self.filename, key=indices_list).squeeze()
         return data.astype(self.dtype)
 
 
 class Hdf5Array(lazy_data_loader):
-
     def __init__(self, filename: str, field: str) -> None:
         """
         Generic lazy loader for Hdf5 files video files, where data is stored as (T, x, y). T is number of frames,
@@ -73,7 +75,7 @@ class Hdf5Array(lazy_data_loader):
             raise ValueError("Field must be a string")
         self.filename = filename
         self.field = field
-        with h5py.File(self.filename, 'r') as file:
+        with h5py.File(self.filename, "r") as file:
             # Access the 'field' dataset
             field_dataset = file[self.field]
 
@@ -105,7 +107,7 @@ class Hdf5Array(lazy_data_loader):
         return len(self.shape)
 
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
-        with h5py.File(self.filename, 'r') as file:
+        with h5py.File(self.filename, "r") as file:
             # Access the 'field' dataset
             field_dataset = file[self.field]
             if isinstance(indices, int):
@@ -113,14 +115,24 @@ class Hdf5Array(lazy_data_loader):
             elif isinstance(indices, list):
                 data = field_dataset[indices, :, :].squeeze()
             else:
-                indices_list = list(range(indices.start or 0, indices.stop or self.shape[0], indices.step or 1))
+                indices_list = list(
+                    range(
+                        indices.start or 0,
+                        indices.stop or self.shape[0],
+                        indices.step or 1,
+                    )
+                )
                 data = field_dataset[indices_list, :, :].squeeze()
         return data.astype(self.dtype)
 
 
 class RegistrationArray(lazy_data_loader):
-    def __init__(self, registration_obj: jnormcorre.motion_correction.FrameCorrector,
-                 data_loader: jnormcorre.utils.lazy_array.lazy_data_loader, pw_rigid = False):
+    def __init__(
+        self,
+        registration_obj: jnormcorre.motion_correction.FrameCorrector,
+        data_loader: jnormcorre.utils.lazy_array.lazy_data_loader,
+        pw_rigid=False,
+    ):
         """
         Class for registering 2D functional imaging data on the fly. Useful for visualization libraries etc.
 
@@ -136,7 +148,9 @@ class RegistrationArray(lazy_data_loader):
         dim1_match = data_loader.shape[1] == registration_obj.template.shape[0]
         dim2_match = data_loader.shape[2] == registration_obj.template.shape[1]
         error_msg = "Dimension mismatch: FOV dims of dataset {} FOV dims\
-            of template {}".format(data_loader.shape[1:], registration_obj.template.shape)
+            of template {}".format(
+            data_loader.shape[1:], registration_obj.template.shape
+        )
         if not (dim1_match and dim2_match):
             raise ValueError(error_msg)
 
@@ -161,11 +175,12 @@ class RegistrationArray(lazy_data_loader):
         self.registration_obj.batching = new_batch
 
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
-
-        #Use data loader to load the frames
+        # Use data loader to load the frames
         frames = self.data_loader[indices, :, :]
-        if len(frames.shape) == 2:  #This means we loaded 1 frame only
+        if len(frames.shape) == 2:  # This means we loaded 1 frame only
             frames = frames[None, :, :]
 
-        #Register the data
-        return self.registration_obj.register_frames(frames, pw_rigid = self._pw_rigid).squeeze()
+        # Register the data
+        return self.registration_obj.register_frames(
+            frames, pw_rigid=self._pw_rigid
+        ).squeeze()

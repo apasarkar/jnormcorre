@@ -7,8 +7,19 @@ from tqdm import tqdm
 
 
 class SimData:
-    def __init__(self, frames, X, Y, n_blobs=10, noise_amplitude=1.0, blob_amplitude=1.0,
-                 max_drift=0.5, max_jitter=2.0, background_noise=1.0, shot_noise=0.1):
+    def __init__(
+        self,
+        frames,
+        X,
+        Y,
+        n_blobs=10,
+        noise_amplitude=1.0,
+        blob_amplitude=1.0,
+        max_drift=0.5,
+        max_jitter=2.0,
+        background_noise=1.0,
+        shot_noise=0.1,
+    ):
         """
         Initialize the SimData object with the given parameters.
 
@@ -40,13 +51,13 @@ class SimData:
 
         # Determine if the drift is linear or quadratic, and randomize parameters accordingly
         if isinstance(max_drift, tuple):
-            self.drift_type = 'quadratic'
+            self.drift_type = "quadratic"
             self.a_x = np.random.uniform(-max_drift[0], max_drift[0])
             self.a_y = np.random.uniform(-max_drift[0], max_drift[0])
             self.b_x = np.random.uniform(-max_drift[1], max_drift[1])
             self.b_y = np.random.uniform(-max_drift[1], max_drift[1])
         else:
-            self.drift_type = 'linear'
+            self.drift_type = "linear"
             self.m_x = np.random.uniform(-max_drift, max_drift)
             self.m_y = np.random.uniform(-max_drift, max_drift)
 
@@ -63,7 +74,7 @@ class SimData:
         Returns:
         - 2D numpy array representing the gaussian blob.
         """
-        return amplitude * np.exp(-((x-x0)**2 + (y-y0)**2) / (2 * sigma**2))
+        return amplitude * np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma**2))
 
     def generate_base_image(self, padding=0):
         """
@@ -83,7 +94,7 @@ class SimData:
 
         x = np.arange(X_padded)
         y = np.arange(Y_padded)
-        x, y = np.meshgrid(x, y, indexing='ij')
+        x, y = np.meshgrid(x, y, indexing="ij")
 
         # Add random gaussian blobs (peaks or valleys) to the noise floor
         for _ in range(self.n_blobs):
@@ -105,7 +116,7 @@ class SimData:
         Returns:
         - Amount of padding needed.
         """
-        if self.drift_type == 'linear':
+        if self.drift_type == "linear":
             max_drift_x = self.m_x * self.frames
             max_drift_y = self.m_y * self.frames
         else:
@@ -132,7 +143,7 @@ class SimData:
             jitter_y = np.random.uniform(-self.max_jitter, self.max_jitter)
 
             # Calculate the drift for the current frame (linear or quadratic)
-            if self.drift_type == 'linear':
+            if self.drift_type == "linear":
                 drift_x = self.m_x * t
                 drift_y = self.m_y * t
             else:
@@ -145,12 +156,21 @@ class SimData:
             shifts.append((shift_x, shift_y))
 
             # Apply the shift using an affine transformation
-            transformation_matrix = np.array([[1, 0, -shift_x], [0, 1, -shift_y], [0, 0, 1]])
-            shifted_image = affine_transform(large_base_image, transformation_matrix[:2, :2],
-                                             offset=transformation_matrix[:2, 2], mode='nearest', order=1)
+            transformation_matrix = np.array(
+                [[1, 0, -shift_x], [0, 1, -shift_y], [0, 0, 1]]
+            )
+            shifted_image = affine_transform(
+                large_base_image,
+                transformation_matrix[:2, :2],
+                offset=transformation_matrix[:2, 2],
+                mode="nearest",
+                order=1,
+            )
 
             # Add frame-by-frame shot noise to the image
-            shifted_image += self.shot_noise * np.random.randn(self.X + 2 * padding, self.Y + 2 * padding)
+            shifted_image += self.shot_noise * np.random.randn(
+                self.X + 2 * padding, self.Y + 2 * padding
+            )
 
             # Extract the relevant section of the shifted image for the current frame
             start_x = padding
@@ -181,23 +201,23 @@ class SimData:
 
         fig, axs = plt.subplots(1, 4, figsize=(20, 5))
 
-        axs[0].imshow(self.data[0], cmap='gray')
-        axs[0].set_title('First Frame')
+        axs[0].imshow(self.data[0], cmap="gray")
+        axs[0].set_title("First Frame")
 
-        axs[1].imshow(self.data[self.frames//2], cmap='gray')
-        axs[1].set_title('Middle Frame')
+        axs[1].imshow(self.data[self.frames // 2], cmap="gray")
+        axs[1].set_title("Middle Frame")
 
-        axs[2].imshow(self.data[-1], cmap='gray')
-        axs[2].set_title('Last Frame')
+        axs[2].imshow(self.data[-1], cmap="gray")
+        axs[2].set_title("Last Frame")
 
-        axs[3].plot(shifts_x, label='Shift X')
-        axs[3].plot(shifts_y, label='Shift Y')
-        axs[3].set_title('Shifts over Time')
-        axs[3].set_xlabel('Frame')
+        axs[3].plot(shifts_x, label="Shift X")
+        axs[3].plot(shifts_y, label="Shift Y")
+        axs[3].set_title("Shifts over Time")
+        axs[3].set_xlabel("Frame")
         axs[3].legend()
 
         for ax in axs[:3]:
-            ax.axis('off')
+            ax.axis("off")
 
         plt.tight_layout()
 
@@ -206,13 +226,22 @@ class SimData:
         else:
             fig.savefig(savefig)
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     save_path = "../test/test.png"
 
-    sim_data_obj_new = SimData(frames=250, X=50, Y=50, n_blobs=10, noise_amplitude=0.2,
-                           blob_amplitude=5, max_drift=(0.0001, 0.01), max_jitter=1,
-                           background_noise=1, shot_noise=0.2)
+    sim_data_obj_new = SimData(
+        frames=250,
+        X=50,
+        Y=50,
+        n_blobs=10,
+        noise_amplitude=0.2,
+        blob_amplitude=5,
+        max_drift=(0.0001, 0.01),
+        max_jitter=1,
+        background_noise=1,
+        shot_noise=0.2,
+    )
 
     data_new, shifts_new = sim_data_obj_new.simulate()
     sim_data_obj_new.plot_overview(savefig=save_path)
