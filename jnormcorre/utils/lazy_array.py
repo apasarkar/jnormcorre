@@ -36,8 +36,8 @@ class lazy_data_loader(ABC):
         return len(self.shape)
 
     def __getitem__(
-            self,
-            item: Union[int, list, np.ndarray, Tuple[Union[int, np.ndarray, slice, range]]]
+        self,
+        item: Union[int, list, np.ndarray, Tuple[Union[int, np.ndarray, slice, range]]],
     ):
         # Step 1: index the frames (dimension 0)
 
@@ -75,14 +75,18 @@ class lazy_data_loader(ABC):
 
             if start is not None:
                 if start > self.shape[0]:
-                    raise IndexError(f"Cannot index beyond `n_frames`.\n"
-                                     f"Desired frame start index of <{start}> "
-                                     f"lies beyond `n_frames` <{self.shape[0]}>")
+                    raise IndexError(
+                        f"Cannot index beyond `n_frames`.\n"
+                        f"Desired frame start index of <{start}> "
+                        f"lies beyond `n_frames` <{self.shape[0]}>"
+                    )
             if stop is not None:
                 if stop > self.shape[0]:
-                    raise IndexError(f"Cannot index beyond `n_frames`.\n"
-                                     f"Desired frame stop index of <{stop}> "
-                                     f"lies beyond `n_frames` <{self.shape[0]}>")
+                    raise IndexError(
+                        f"Cannot index beyond `n_frames`.\n"
+                        f"Desired frame stop index of <{stop}> "
+                        f"lies beyond `n_frames` <{self.shape[0]}>"
+                    )
 
             if step is None:
                 step = 1
@@ -92,8 +96,7 @@ class lazy_data_loader(ABC):
 
         else:
             raise IndexError(
-                f"Invalid indexing method, "
-                f"you have passed a: <{type(item)}>"
+                f"Invalid indexing method, " f"you have passed a: <{type(item)}>"
             )
 
         # Step 3: Now slice the data with frame_indexer (careful: if the ndims has shrunk, add a dim)

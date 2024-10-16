@@ -21,11 +21,11 @@ Rigid Motion Correction Function
 
 .. autofunction:: jnormcorre.motion_correction.register_frames_to_template_rigid
 
-.. autofunction:: jnormcorre.motion_correction.register_frames_to_template_1p_rigid
+.. autofunction:: jnormcorre.motion_correction.register_to_template_and_transfer_rigid
 
 .. autofunction:: jnormcorre.motion_correction.register_frames_to_template_pwrigid
 
-.. autofunction:: jnormcorre.motion_correction.register_frames_to_template_1p_pwrigid
+.. autofunction:: jnormcorre.motion_correction.register_to_template_and_transfer_pwrigid
 
 
 jnormcorre.utils.lazy_array API
