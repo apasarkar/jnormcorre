@@ -11,16 +11,16 @@ import cv2
 from typing import *
 
 
-def get_kernel(gSig_filt: list[int]):
-    if not isinstance(gSig_filt[0], int):
+def compute_highpass_filter_kernel(gaussian_sigma: list[int]):
+    if not isinstance(gaussian_sigma[0], int):
         raise TypeError(
             "gSig_filt is a list which must contain an integer,"
-            " instead it contained{}".format(type(gSig_filt[0]))
+            " instead it contained{}".format(type(gaussian_sigma[0]))
         )
-    if gSig_filt[0] < 1:
+    if gaussian_sigma[0] < 1:
         raise ValueError("gSig_filt is a list which must contain a positive integer")
-    ksize = tuple([(3 * i) // 2 * 2 + 1 for i in gSig_filt])
-    ker = cv2.getGaussianKernel(ksize[0], gSig_filt[0])
+    ksize = tuple([(3 * i) // 2 * 2 + 1 for i in gaussian_sigma])
+    ker = cv2.getGaussianKernel(ksize[0], gaussian_sigma[0])
     ker2D = ker.dot(ker.T)
     nz = np.nonzero(ker2D >= ker2D[:, 0].max())
     zz = np.nonzero(ker2D < ker2D[:, 0].max())

@@ -5,6 +5,78 @@ import numpy as np
 import h5py
 from typing import *
 
+class FilteredArray(lazy_data_loader):
+    def __init__(self,
+                 raw_data_loader: lazy_data_loader,
+                 filter_function: Callable):
+        """
+        Class for loading and filtering data; this is broadly useful because we often want to spatially filter
+        data to expose salient signals. We use this filtered version of the data to estimate shifts
+        Args:
+                raw_data_loader (lazy_data_loader): An object that supports the lazy_data_loader interface.
+                    This can be for e.g. a custom object that reads data from disk, an array in RAM (like a numpy ndarray)
+                    or anything else
+
+                filter_function (Callable): A function that applies a spatial filter to every frame of a data array. It takes
+                    an input movie of shape (frames, fov dim 1, fov dim 2) and returns a
+                    filtered movie of the same shape. The type of the output is cast to numpy array in this function.
+        """
+
+        self._raw_data_loader = raw_data_loader
+        self._filter = filter_function
+
+    @property
+    def raw_data_loader(self) -> lazy_data_loader:
+        return self._raw_data_loader
+
+    @property
+    def filter_function(self) -> Callable:
+        return self._filter
+
+    @property
+    def dtype(self) -> str:
+        """
+        data type
+        """
+        return self.raw_data_loader.dtype
+
+    @property
+    def shape(self) -> Tuple[int, int, int]:
+        """
+        Array shape (n_frames, dims_x, dims_y)
+        """
+        return self.raw_data_loader.shape
+
+    @property
+    def ndim(self) -> int:
+        """
+        Number of dimensions
+        """
+        return len(self.shape)
+
+
+    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
+        """
+        Lazy computation logic goes here to return frames. Slices the array over time (dimension 0) at the desired indices.
+
+        Parameters
+        ----------
+        indices: Union[list, int, slice]
+            the user's desired way of picking frames, either an int, list of ints, or slice
+             i.e. slice object or int passed from `__getitem__()`
+
+        Returns
+        -------
+        np.ndarray
+            array at the indexed slice
+        """
+        frames = self.raw_data_loader[indices]
+        if frames.ndim == 2:
+            frames = frames[None, :, :]
+        return np.array(self.filter_function(frames))
+
+
+
 
 class TiffArray(lazy_data_loader):
     def __init__(self, filename):
