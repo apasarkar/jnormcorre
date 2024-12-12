@@ -5,8 +5,8 @@ Functionality to deal with background (neuropil) contamination
 
 import numpy as np
 import jax
+import jax.numpy as jnp
 from jax import jit, vmap
-from functools import partial
 import cv2
 from typing import *
 
@@ -29,39 +29,21 @@ def get_kernel(gSig_filt: list[int]):
     return ker2D
 
 
-def high_pass_filter_cv(kernel, img_orig):
-    if img_orig.ndim == 2:  # image
-        return cv2.filter2D(
-            np.array(img_orig, dtype=np.float32),
-            -1,
-            kernel,
-            borderType=cv2.BORDER_REFLECT,
-        )
-    else:  # movie
-        return jnormcorre.utils.movies.movie(
-            np.array(
-                [
-                    cv2.filter2D(
-                        np.array(img, dtype=np.float32),
-                        -1,
-                        kernel,
-                        borderType=cv2.BORDER_REFLECT,
-                    )
-                    for img in img_orig
-                ]
-            )
-        )
+def _high_pass_filter_img(img: np.ndarray, kernel: np.ndarray):
+    """
+    Filter img with kernel
+    Args:
+        img (np.ndarray): Shape (fov dim 1, fov dim 2). Image to be filtered
+        kernel (np.ndarray): Shape (k1, k1). Kernel for high pass filtering
+    Returns:
+        filtered_img (np.ndarray): Shape (fov dim 1, fov dim 2).
+    """
+    img_padded = jnp.pad(img,
+                         (((kernel.shape[0]) // 2, (kernel.shape[0]) // 2),
+                          ((kernel.shape[1]) // 2, (kernel.shape[1]) // 2)),
+                         mode='reflect')
+    filtered_frame = jax.scipy.signal.convolve(img_padded, kernel, mode="valid")
+    return filtered_frame
 
-
-def high_pass_batch(kernel, imgs):
-    return np.array(
-        [
-            cv2.filter2D(
-                np.array(img, dtype=np.float32),
-                -1,
-                kernel,
-                borderType=cv2.BORDER_REFLECT,
-            )
-            for img in imgs
-        ]
-    )
+high_pass_filter_img = jit(_high_pass_filter_img)
+high_pass_batch = jit(vmap(_high_pass_filter_img, in_axes=(0, None)))

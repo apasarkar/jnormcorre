@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.ERROR)
 import numpy as np
 import tifffile
 from typing import List
-from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
+from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_img, high_pass_batch
 from jnormcorre.utils.lazy_array import lazy_data_loader
 from tqdm import tqdm
 import math
@@ -289,7 +289,7 @@ class MotionCorrect(object):
             else:
                 self.min_mov = np.array(
                     [
-                        high_pass_filter_cv(m_, self.filter_kernel)
+                        high_pass_filter_img(m_, self.filter_kernel)
                         for m_ in self.lazy_dataset[:frame_constant, :, :]
                     ]
                 ).min()
@@ -468,7 +468,7 @@ def _motion_correct_batch_rigid(
     # Initialize template by sampling frames uniformly throughout the movie and taking the median
     if template is None:
         if filter_kernel is not None:
-            m = np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m])
+            m = np.array([high_pass_filter_img(m_, filter_kernel) for m_ in m])
 
         template = bin_median(m)
 
@@ -509,7 +509,7 @@ def _motion_correct_batch_rigid(
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
         if filter_kernel is not None:
-            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
+            new_templ = high_pass_filter_img(new_templ, filter_kernel)
 
     total_template = new_templ
     templates = []
@@ -598,7 +598,7 @@ def _motion_correct_batch_pwrigid(
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
         if filter_kernel is not None:
-            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
+            new_templ = high_pass_filter_img(new_templ, filter_kernel)
 
     total_template = new_templ
     templates = []
@@ -753,7 +753,7 @@ def _tile_and_correct_dataloader(
                         imgs, template, max_shifts, add_to_movie
                     )
                 else:
-                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
+                    imgs_filtered = high_pass_batch(imgs, filter_kernel)
                     outs = register_to_template_and_transfer_rigid(
                         imgs, imgs_filtered, template, max_shifts, add_to_movie
                     )
@@ -774,7 +774,7 @@ def _tile_and_correct_dataloader(
                         add_to_movie,
                     )
                 else:
-                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
+                    imgs_filtered = high_pass_batch(imgs, filter_kernel)
                     outs = register_to_template_and_transfer_pwrigid(
                         imgs,
                         imgs_filtered,
