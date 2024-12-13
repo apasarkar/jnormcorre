@@ -72,6 +72,7 @@ class FrameCorrector:
             static_argnums=(2, 3, 4, 5, 7),
         )
 
+
         def simplified_registration_func_pw(frames: np.ndarray) -> ArrayLike:
             return self.pw_registration_method(
                 frames,
@@ -88,6 +89,7 @@ class FrameCorrector:
 
         self.jitted_pwrigid_method = simplified_registration_func_pw
 
+
         # Set the rigid function
         self.rigid_registration_method = jit(
             vmap(_register_to_template_rigid, in_axes=(0, None, None, None))
@@ -99,6 +101,50 @@ class FrameCorrector:
             )[0]
 
         self.jitted_rigid_method = simplified_registration_func_rig
+
+
+        #Set the rigid transfer registration function
+        self.rigid_transfer_registration_method = jit(
+            vmap(
+                _register_to_template_and_transfer_rigid,
+                in_axes = (0, 0, None, None, None)
+            )
+        )
+
+        def simplified_rigid_transfer_registration_func(frames_to_register: np.ndarray,
+                                                        reference_frames: np.ndarray) -> ArrayLike:
+            return self.rigid_transfer_registration_method(frames_to_register,
+                                                           reference_frames,
+                                                           self.template, self.max_shifts, self.add_to_movie)[0]
+
+        self.jitted_transfer_rigid_method = simplified_rigid_transfer_registration_func
+
+        # Set the piecewise rigid transfer registration function
+        self.pwrigid_transfer_registration_method = jit(
+            vmap(
+                _register_to_template_and_transfer_pwrigid,
+                in_axes = (0, 0, None, None, None, None, None, None, None, None, None)
+            ),
+            static_argnums=(3, 4, 5, 6, 8)
+        )
+
+        def simplified_pwrigid_transfer_registration_func(frames_to_register: np.ndarray,
+                                                          reference_frames: np.ndarray) -> ArrayLike:
+            return self.pwrigid_transfer_registration_method(frames_to_register,
+                                                             reference_frames,
+                                                             self.template,
+                                                             self.strides[0],
+                                                             self.strides[1],
+                                                             self.overlaps[0],
+                                                             self.overlaps[1],
+                                                             self.max_shifts,
+                                                             self.upsample_factor_fft,
+                                                             self.max_deviation_rigid,
+                                                             self.add_to_movie
+                                                             )[0]
+
+        self.jitted_transfer_pwrigid_method = simplified_pwrigid_transfer_registration_func
+
 
     def register_frames(self, frames: np.ndarray, pw_rigid: bool = False) -> np.ndarray:
         """
@@ -125,7 +171,40 @@ class FrameCorrector:
                 used_callable(frames[start:end_point, :, :])
             )
 
-        return np.array(output)
+        return output
+
+    def register_frames_and_transfer(self,
+                                     target_frames: np.ndarray,
+                                     reference_frames: np.ndarray,
+                                     pw_rigid: bool = False) -> np.ndarray:
+        """
+       Function to register a set of frames to this object's template.
+
+       Args:
+           target_frames (np.ndarray): dimensions (T, d1, d2), where T is the number of frames and d1, d2 are FOV dims. Frames we want to ultimately register
+           reference_frames (np.ndarray): dimensions (T, d1, d2), where T is number of frames and d1, d2 are FOV dims. We align these frames to the template to estimate shifts, and then apply these shifts to target_frames
+           pw_rigid (bool): Indicates whether we do piecewise rigid or rigid registration. Defaults to False (rigid).
+
+       Returns:
+           corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
+       """
+        if not (target_frames.shape == reference_frames.shape):
+            raise ValueError(f"Inconsistent reference and target frame shapes {target_frames.shape} and "
+                             f"{reference_frames.shape}")
+        output = np.zeros_like(target_frames)
+        batches = list(range(0, output.shape[0], self.batching))
+        if len(batches) > 1:
+            batches[-1] = output.shape[0] - self.batching
+
+        used_callable = (
+            self.jitted_transfer_pwrigid_method if pw_rigid else self.jitted_transfer_rigid_method
+        )
+        for start in batches:
+            end_point = min(start + self.batching, output.shape[0])
+            output[start:end_point, :, :] = np.array(used_callable(target_frames[start:end_point, :, :],
+                                                                   reference_frames[start:end_point, :, :]))
+
+        return output
 
     @property
     def batching(self):
