@@ -106,7 +106,7 @@ class Test_mc:
     @pytest.mark.parametrize("min_mov", [None, -5, 5])
     @pytest.mark.parametrize("niter_els", [1, 3])
     def test_parameters(self, max_shifts, num_splits_to_process_rig, num_splits_to_process_els,
-                        gSig_filt, overlaps, pw_rigid, frames_per_split, min_mov, niter_els,
+                        overlaps, pw_rigid, frames_per_split, min_mov, niter_els,
                         niter_rig=4, max_deviation_rigid=3, upsample_factor_grid=4,
                         strides=(50, 50)):
 
