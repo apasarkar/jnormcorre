@@ -29,6 +29,43 @@ def compute_highpass_filter_kernel(gaussian_sigma: list[int]):
     return ker2D
 
 
+def compute_gaussian_kernel(sigma_x: float, sigma_y: float, size: Optional[tuple]=None):
+    """
+    Constructs a Gaussian kernel for image convolution.
+
+    Args:
+        sigma_x (float): Standard deviation of the Gaussian in the x dimension.
+        sigma_y (float): Standard deviation of the Gaussian in the y dimension.
+        size (tuple of int, optional): Dimensions of the kernel (height, width).
+                                       If None, defaults to 6 * sigma_x and 6 * sigma_y.
+
+    Returns:
+        np.ndarray: 2D Gaussian kernel.
+    """
+    # Define the size of the kernel if not provided
+    if size is None:
+        size_x = int(np.ceil(6 * sigma_x))  # Covers ~99% of the Gaussian
+        size_y = int(np.ceil(6 * sigma_y))
+    else:
+        size_x, size_y = size
+
+    # Ensure the kernel size is odd
+    size_x += (size_x % 2 == 0)
+    size_y += (size_y % 2 == 0)
+
+    # Create grid for the kernel
+    x = np.linspace(-(size_x // 2), size_x // 2, size_x)
+    y = np.linspace(-(size_y // 2), size_y // 2, size_y)
+    x, y = np.meshgrid(x, y)
+
+    # Compute the Gaussian function
+    kernel = np.exp(-(x ** 2 / (2 * sigma_x ** 2) + y ** 2 / (2 * sigma_y ** 2)))
+
+    # Normalize the kernel
+    kernel /= np.sum(kernel)
+
+    return kernel
+
 def _convolution_image_filter(img: np.ndarray, kernel: np.ndarray):
     """
     Filter img with kernel
