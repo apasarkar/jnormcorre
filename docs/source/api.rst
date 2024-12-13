@@ -8,7 +8,7 @@ frame_corrector Class
 ^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: jnormcorre.motion_correction.frame_corrector
-   :members: __init__, register_frames, rigid_function, pwrigid_function
+   :members: __init__, register_frames, register_frames_and_transfer
 
 MotionCorrect Class
 ^^^^^^^^^^^^^^^^^^^
@@ -55,4 +55,7 @@ jnormcorre.utils.registrationarrays
    :members: __init__
 
 .. autoclass:: jnormcorre.utils.registrationarrays.RegistrationArray
+   :members: __init__
+
+.. autoclass:: jnormcorre.utils.registrationarrays.FilteredArray
    :members: __init__

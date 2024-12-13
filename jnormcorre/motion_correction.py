@@ -16,7 +16,6 @@ logging.basicConfig(level=logging.ERROR)
 import numpy as np
 import tifffile
 from typing import List
-from jnormcorre.onephotonmethods import get_kernel, high_pass_filter_cv, high_pass_batch
 from jnormcorre.utils.lazy_array import lazy_data_loader
 from tqdm import tqdm
 import math
@@ -50,7 +49,7 @@ class FrameCorrector:
             min_mov (float): The minimum value of the movie, if known.
             batching (int): Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
         """
-        self.template = template
+        self._template = template
         self.max_shifts = max_shifts
         self.upsample_factor_fft = 10
 
@@ -73,6 +72,7 @@ class FrameCorrector:
             static_argnums=(2, 3, 4, 5, 7),
         )
 
+
         def simplified_registration_func_pw(frames: np.ndarray) -> ArrayLike:
             return self.pw_registration_method(
                 frames,
@@ -89,6 +89,7 @@ class FrameCorrector:
 
         self.jitted_pwrigid_method = simplified_registration_func_pw
 
+
         # Set the rigid function
         self.rigid_registration_method = jit(
             vmap(_register_to_template_rigid, in_axes=(0, None, None, None))
@@ -100,6 +101,57 @@ class FrameCorrector:
             )[0]
 
         self.jitted_rigid_method = simplified_registration_func_rig
+
+
+        #Set the rigid transfer registration function
+        self.rigid_transfer_registration_method = jit(
+            vmap(
+                _register_to_template_and_transfer_rigid,
+                in_axes = (0, 0, None, None, None)
+            )
+        )
+
+        def simplified_rigid_transfer_registration_func(frames_to_register: np.ndarray,
+                                                        reference_frames: np.ndarray) -> ArrayLike:
+            return self.rigid_transfer_registration_method(frames_to_register,
+                                                           reference_frames,
+                                                           self.template, self.max_shifts, self.add_to_movie)[0]
+
+        self.jitted_transfer_rigid_method = simplified_rigid_transfer_registration_func
+
+        # Set the piecewise rigid transfer registration function
+        self.pwrigid_transfer_registration_method = jit(
+            vmap(
+                _register_to_template_and_transfer_pwrigid,
+                in_axes = (0, 0, None, None, None, None, None, None, None, None, None)
+            ),
+            static_argnums=(3, 4, 5, 6, 8)
+        )
+
+        def simplified_pwrigid_transfer_registration_func(frames_to_register: np.ndarray,
+                                                          reference_frames: np.ndarray) -> ArrayLike:
+            return self.pwrigid_transfer_registration_method(frames_to_register,
+                                                             reference_frames,
+                                                             self.template,
+                                                             self.strides[0],
+                                                             self.strides[1],
+                                                             self.overlaps[0],
+                                                             self.overlaps[1],
+                                                             self.max_shifts,
+                                                             self.upsample_factor_fft,
+                                                             self.max_deviation_rigid,
+                                                             self.add_to_movie
+                                                             )[0]
+
+        self.jitted_transfer_pwrigid_method = simplified_pwrigid_transfer_registration_func
+
+    @property
+    def template(self) -> np.ndarray:
+        return self._template
+
+    @template.setter
+    def template(self, new_template):
+        self._template = new_template
 
     def register_frames(self, frames: np.ndarray, pw_rigid: bool = False) -> np.ndarray:
         """
@@ -126,7 +178,40 @@ class FrameCorrector:
                 used_callable(frames[start:end_point, :, :])
             )
 
-        return np.array(output)
+        return output
+
+    def register_frames_and_transfer(self,
+                                     target_frames: np.ndarray,
+                                     reference_frames: np.ndarray,
+                                     pw_rigid: bool = False) -> np.ndarray:
+        """
+       Function to register a set of frames to this object's template.
+
+       Args:
+           target_frames (np.ndarray): dimensions (T, d1, d2), where T is the number of frames and d1, d2 are FOV dims. Frames we want to ultimately register
+           reference_frames (np.ndarray): dimensions (T, d1, d2), where T is number of frames and d1, d2 are FOV dims. We align these frames to the template to estimate shifts, and then apply these shifts to target_frames
+           pw_rigid (bool): Indicates whether we do piecewise rigid or rigid registration. Defaults to False (rigid).
+
+       Returns:
+           corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
+       """
+        if not (target_frames.shape == reference_frames.shape):
+            raise ValueError(f"Inconsistent reference and target frame shapes {target_frames.shape} and "
+                             f"{reference_frames.shape}")
+        output = np.zeros_like(target_frames)
+        batches = list(range(0, output.shape[0], self.batching))
+        if len(batches) > 1:
+            batches[-1] = output.shape[0] - self.batching
+
+        used_callable = (
+            self.jitted_transfer_pwrigid_method if pw_rigid else self.jitted_transfer_rigid_method
+        )
+        for start in batches:
+            end_point = min(start + self.batching, output.shape[0])
+            output[start:end_point, :, :] = np.array(used_callable(target_frames[start:end_point, :, :],
+                                                                   reference_frames[start:end_point, :, :]))
+
+        return output
 
     @property
     def batching(self):
@@ -210,7 +295,6 @@ class MotionCorrect(object):
         niter_els: int = 1,
         min_mov: float = None,
         upsample_factor_grid: int = 4,
-        gSig_filt: Optional[list[int]] = None,
         bigtiff: bool = False,
     ) -> None:
         """
@@ -229,8 +313,6 @@ class MotionCorrect(object):
             num_splits_to_process_els (int): Number of splits we process per iteration of pwrigid motion correction
             niter_els: Number of iterations of piecewise rigid registration
             min_mov (float). The minimum value of the movie, if known
-            gSig_filt (list): List with 1 positive integer describing a Gaussian standard deviation. We use this to construct a kernel to
-                high-pass filter data which has large background contamination.
             bigtiff (bool): Indicates whether or not movie is saved as a bigtiff or regular tiff
         """
         if not isinstance(niter_els, int) or niter_els < 1:
@@ -256,11 +338,6 @@ class MotionCorrect(object):
         self.file_FOV_dims = self.lazy_dataset.shape[1], self.lazy_dataset.shape[2]
         self.file_num_frames = self.lazy_dataset.shape[0]
 
-        # In case gSig_filt is not None, we define a kernel which we use for 1p processing:
-        if gSig_filt is not None:
-            self.filter_kernel = get_kernel(gSig_filt)
-        else:
-            self.filter_kernel = None
 
     def motion_correct(
         self, template: Optional[np.ndarray] = None, save_movie: Optional[bool] = False
@@ -278,21 +355,14 @@ class MotionCorrect(object):
         """
         frame_constant = 400
         if self.min_mov is None:
-            if self.filter_kernel is None:
-                mi = np.inf
-                for j in range(min(self.lazy_dataset.shape[0], frame_constant)):
-                    try:
-                        mi = min(mi, np.min(self.lazy_dataset[j, :, :]))
-                    except StopIteration:
-                        break
-                self.min_mov = mi
-            else:
-                self.min_mov = np.array(
-                    [
-                        high_pass_filter_cv(m_, self.filter_kernel)
-                        for m_ in self.lazy_dataset[:frame_constant, :, :]
-                    ]
-                ).min()
+
+            mi = np.inf
+            for j in range(min(self.lazy_dataset.shape[0], frame_constant)):
+                try:
+                    mi = min(mi, np.min(self.lazy_dataset[j, :, :]))
+                except StopIteration:
+                    break
+            self.min_mov = mi
 
         if self.pw_rigid:
             # Verify that the strides and overlaps are meaningfully defined
@@ -308,6 +378,7 @@ class MotionCorrect(object):
                     np.max(np.abs(self.x_shifts_els)), np.max(np.abs(self.y_shifts_els))
                 )
             )
+
         else:
             self._motion_correct_rigid(template=template, save_movie=save_movie)
             b0 = np.ceil(np.max(np.abs(self.shifts_rig)))
@@ -357,7 +428,6 @@ class MotionCorrect(object):
             template=self.total_template_rig,
             save_movie_rigid=save_movie,
             add_to_movie=-self.min_mov,
-            filter_kernel=self.filter_kernel,
             bigtiff=self.bigtiff,
         )
         if template is None:
@@ -412,7 +482,6 @@ class MotionCorrect(object):
             num_iter=num_iter,
             template=self.total_template_els,
             save_movie=save_movie,
-            filter_kernel=self.filter_kernel,
             bigtiff=self.bigtiff,
         )
 
@@ -440,7 +509,6 @@ def _motion_correct_batch_rigid(
     template: np.ndarray = None,
     save_movie_rigid: bool = False,
     add_to_movie: float = None,
-    filter_kernel: np.ndarray = None,
     bigtiff: bool = False,
 ) -> tuple[str, np.ndarray, list, list]:
     """
@@ -467,8 +535,6 @@ def _motion_correct_batch_rigid(
 
     # Initialize template by sampling frames uniformly throughout the movie and taking the median
     if template is None:
-        if filter_kernel is not None:
-            m = np.array([high_pass_filter_cv(filter_kernel, m_) for m_ in m])
 
         template = bin_median(m)
 
@@ -503,13 +569,10 @@ def _motion_correct_batch_rigid(
             max_deviation_rigid=0,
             save_movie=save_flag,
             num_splits=num_splits_to_process,
-            filter_kernel=filter_kernel,
             bigtiff=bigtiff,
         )
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_rig]), -1)
-        if filter_kernel is not None:
-            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
 
     total_template = new_templ
     templates = []
@@ -538,7 +601,6 @@ def _motion_correct_batch_pwrigid(
     num_iter: int = 1,
     template: Optional[np.ndarray] = None,
     save_movie: bool = False,
-    filter_kernel: Optional[np.ndarray] = None,
     bigtiff=False,
 ) -> tuple[str, np.ndarray, list, list, list, list, list]:
     """
@@ -592,13 +654,10 @@ def _motion_correct_batch_pwrigid(
             upsample_factor_grid=upsample_factor_grid,
             save_movie=save_flag,
             num_splits=num_splits_to_process,
-            filter_kernel=filter_kernel,
             bigtiff=bigtiff,
         )
 
         new_templ = np.nanmedian(np.dstack([r[-1] for r in res_el]), -1)
-        if filter_kernel is not None:
-            new_templ = high_pass_filter_cv(filter_kernel, new_templ)
 
     total_template = new_templ
     templates = []
@@ -638,7 +697,6 @@ def _execute_motion_correction_iteration(
     upsample_factor_grid: int = 4,
     save_movie: bool = True,
     num_splits: Optional[int] = None,
-    filter_kernel: np.ndarray = None,
     bigtiff: bool = False,
 ) -> tuple[str, list[tuple]]:
     """
@@ -686,7 +744,6 @@ def _execute_motion_correction_iteration(
                 np.array(add_to_movie, dtype=np.float32),
                 max_deviation_rigid,
                 upsample_factor_grid,
-                filter_kernel,
             ]
         )
 
@@ -733,7 +790,6 @@ def _tile_and_correct_dataloader(
             add_to_movie,
             max_deviation_rigid,
             upsample_factor_grid,
-            filter_kernel,
         ) = data
         if out_fname is not None:
             if memmap_placeholder is None:
@@ -748,46 +804,26 @@ def _tile_and_correct_dataloader(
             upsample_factor_fft = 10  # Hardcoded from original method
 
             if max_deviation_rigid == 0:
-                if filter_kernel is None:
-                    outs = register_frames_to_template_rigid(
-                        imgs, template, max_shifts, add_to_movie
-                    )
-                else:
-                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = register_to_template_and_transfer_rigid(
-                        imgs, imgs_filtered, template, max_shifts, add_to_movie
-                    )
+
+                outs = register_frames_to_template_rigid(
+                    imgs, template, max_shifts, add_to_movie
+                )
+
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
             else:
-                if filter_kernel is None:
-                    outs = register_frames_to_template_pwrigid(
-                        imgs,
-                        template,
-                        strides[0],
-                        strides[1],
-                        overlaps[0],
-                        overlaps[1],
-                        max_shifts,
-                        upsample_factor_fft,
-                        max_deviation_rigid,
-                        add_to_movie,
-                    )
-                else:
-                    imgs_filtered = high_pass_batch(filter_kernel, imgs)
-                    outs = register_to_template_and_transfer_pwrigid(
-                        imgs,
-                        imgs_filtered,
-                        template,
-                        strides[0],
-                        strides[1],
-                        overlaps[0],
-                        overlaps[1],
-                        max_shifts,
-                        upsample_factor_fft,
-                        max_deviation_rigid,
-                        add_to_movie,
-                    )
+                outs = register_frames_to_template_pwrigid(
+                    imgs,
+                    template,
+                    strides[0],
+                    strides[1],
+                    overlaps[0],
+                    overlaps[1],
+                    max_shifts,
+                    upsample_factor_fft,
+                    max_deviation_rigid,
+                    add_to_movie,
+                )
 
                 mc[start_pt:end_pt, :, :] = outs[0]
                 shift_info.extend([[k] for k in np.array(outs[1])])
@@ -826,7 +862,6 @@ class tile_and_correct_dataset:
             add_to_movie,
             max_deviation_rigid,
             upsample_factor_grid,
-            filter_kernel,
         ) = self.param_list[index]
 
         imgs = lazy_dataset[idxs, :, :]
@@ -844,7 +879,6 @@ class tile_and_correct_dataset:
             add_to_movie,
             max_deviation_rigid,
             upsample_factor_grid,
-            filter_kernel,
         )
 
 
