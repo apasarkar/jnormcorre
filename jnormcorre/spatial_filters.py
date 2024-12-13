@@ -29,12 +29,12 @@ def compute_highpass_filter_kernel(gaussian_sigma: list[int]):
     return ker2D
 
 
-def _high_pass_filter_img(img: np.ndarray, kernel: np.ndarray):
+def _convolution_image_filter(img: np.ndarray, kernel: np.ndarray):
     """
     Filter img with kernel
     Args:
         img (np.ndarray): Shape (fov dim 1, fov dim 2). Image to be filtered
-        kernel (np.ndarray): Shape (k1, k1). Kernel for high pass filtering
+        kernel (np.ndarray): Shape (k1, k1). Kernel for filtering
     Returns:
         filtered_img (np.ndarray): Shape (fov dim 1, fov dim 2).
     """
@@ -45,5 +45,5 @@ def _high_pass_filter_img(img: np.ndarray, kernel: np.ndarray):
     filtered_frame = jax.scipy.signal.convolve(img_padded, kernel, mode="valid")
     return filtered_frame
 
-high_pass_filter_img = jit(_high_pass_filter_img)
-high_pass_batch = jit(vmap(_high_pass_filter_img, in_axes=(0, None)))
+convolution_image_filter = jit(_convolution_image_filter)
+convolution_image_filter_batch = jit(vmap(_convolution_image_filter, in_axes=(0, None)))
