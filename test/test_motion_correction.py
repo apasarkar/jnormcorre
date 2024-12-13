@@ -89,7 +89,7 @@ class Test_mc:
 
             mc = MotionCorrect(lazy_dataset,
                                max_shifts=(6, 6), niter_rig=4, max_deviation_rigid=3,
-                               upsample_factor_grid=4, strides=(50, 50), frames_per_split=1000, gSig_filt=None,
+                               upsample_factor_grid=4, strides=(50, 50), frames_per_split=1000,
                                num_splits_to_process_els=5, num_splits_to_process_rig=5, pw_rigid=True,
                                overlaps=(10, 10), min_mov=-5, niter_els=1)
 
@@ -101,7 +101,6 @@ class Test_mc:
     @pytest.mark.parametrize("num_splits_to_process_rig", [5])
     @pytest.mark.parametrize("num_splits_to_process_els", [5])
     @pytest.mark.parametrize("frames_per_split", [100, 1000])
-    @pytest.mark.parametrize("gSig_filt", [None, (10, 10)])
     @pytest.mark.parametrize("overlaps", [(10, 10), (24, 24)])
     @pytest.mark.parametrize("pw_rigid", [True, False])
     @pytest.mark.parametrize("min_mov", [None, -5, 5])
@@ -120,7 +119,6 @@ class Test_mc:
                            pw_rigid=pw_rigid,
                            num_splits_to_process_els=num_splits_to_process_els,
                            upsample_factor_grid=upsample_factor_grid, max_deviation_rigid=max_deviation_rigid,
-                           gSig_filt=gSig_filt,
                            min_mov=min_mov, niter_els=niter_els)
 
         # Perform motion correction
@@ -144,7 +142,7 @@ class Test_mc:
                            pw_rigid=pw_rigid,
                            num_splits_to_process_els=num_splits_to_process_els,
                            upsample_factor_grid=4, max_deviation_rigid=3,
-                           gSig_filt=None, min_mov=-1, niter_els=niter_els)
+                           min_mov=-1, niter_els=niter_els)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -162,7 +160,7 @@ class Test_mc:
                            num_splits_to_process_rig=num_splits_to_process_rig, strides=(50, 50), overlaps=(10, 10),
                            pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
-                           gSig_filt=None, min_mov=-1, niter_els=niter_els)
+                           min_mov=-1, niter_els=niter_els)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -190,7 +188,7 @@ class Test_mc:
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
                            pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
-                           gSig_filt=None, min_mov=-1, niter_els=3)
+                           min_mov=-1, niter_els=3)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -223,7 +221,7 @@ class Test_mc:
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
                            pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
-                           gSig_filt=None, min_mov=-1, niter_els=3)
+                           min_mov=-1, niter_els=3)
 
         # Perform motion correction
         mc.motion_correct(save_movie=True)
@@ -252,7 +250,7 @@ class Test_mc:
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
                            pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
-                           gSig_filt=None, min_mov=-1, niter_els=3)
+                           min_mov=-1, niter_els=3)
 
         # Perform motion correction
         registration_object, target_file = mc.motion_correct(save_movie=True)
@@ -291,7 +289,7 @@ class Test_mc:
                            num_splits_to_process_rig=5, strides=(50, 50), overlaps=(10, 10),
                            pw_rigid=pw_rigid, num_splits_to_process_els=5,
                            upsample_factor_grid=4, max_deviation_rigid=3,
-                           gSig_filt=None, min_mov=-1, niter_els=3)
+                           min_mov=-1, niter_els=3)
 
         # Perform motion correction
         registration_obj, target_file = mc.motion_correct(save_movie=True)
