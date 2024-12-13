@@ -202,26 +202,33 @@ class RegistrationArray(lazy_data_loader):
     def __init__(
         self,
         registration_obj: jnormcorre.motion_correction.FrameCorrector,
-        data_loader: jnormcorre.utils.lazy_array.lazy_data_loader,
+        data_to_register: jnormcorre.utils.lazy_array.lazy_data_loader,
         pw_rigid=False,
+        reference_data: Optional[jnormcorre.utils.lazy_array.lazy_data_loader] = None
     ):
         """
         Class for registering 2D functional imaging data on the fly. Useful for visualization libraries etc.
 
         Args:
             registration_obj (jnormcorre.motion_correction.FrameCorrector): Object which can perform registration
-            data_loader (jnormcorre.utils.lazy_array.lazy_data_loader): Data loading object
+            data_to_register (jnormcorre.utils.lazy_array.lazy_data_loader): Data loading object
             pw_rigid (bool): Indicates whether we apply rigid or piecewise rigid registration to frames
+            reference_data [Optional(jnormcorre.utils.lazy_array.lazy_data_loader)]: A reference stack. If provided, the algorithm
+                will find optimal alignment between template and each frame of this stack. It will then apply these shifts to "data_to_register"
         """
-        self.data_loader = data_loader
+        self.reference_data = reference_data
+        self.data_loader = data_to_register
+        if self.reference_data is not None:
+            if not (self.reference_data.shape == self.data_loader.shape):
+                raise ValueError(f"The data to register and the reference data stack do not have the same shape.")
         self.registration_obj = registration_obj
         self._pw_rigid = pw_rigid
         # Verify that the data and registration info align properly
-        dim1_match = data_loader.shape[1] == registration_obj.template.shape[0]
-        dim2_match = data_loader.shape[2] == registration_obj.template.shape[1]
+        dim1_match = data_to_register.shape[1] == registration_obj.template.shape[0]
+        dim2_match = data_to_register.shape[2] == registration_obj.template.shape[1]
         error_msg = "Dimension mismatch: FOV dims of dataset {} FOV dims\
             of template {}".format(
-            data_loader.shape[1:], registration_obj.template.shape
+            data_to_register.shape[1:], registration_obj.template.shape
         )
         if not (dim1_match and dim2_match):
             raise ValueError(error_msg)
@@ -246,6 +253,13 @@ class RegistrationArray(lazy_data_loader):
     def batching(self, new_batch: int):
         self.registration_obj.batching = new_batch
 
+    @property
+    def template(self) -> np.ndarray:
+        """
+        The template used for registration
+        """
+        return self.registration_obj.template
+
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         # Use data loader to load the frames
         frames = self.data_loader[indices, :, :]
@@ -253,6 +267,12 @@ class RegistrationArray(lazy_data_loader):
             frames = frames[None, :, :]
 
         # Register the data
-        return self.registration_obj.register_frames(
-            frames, pw_rigid=self._pw_rigid
-        ).squeeze()
+        if self.reference_data is None:
+            return self.registration_obj.register_frames(
+                frames, pw_rigid=self._pw_rigid
+            ).squeeze()
+        else:
+            reference_frames = self.reference_data[indices, :, :]
+            if len(reference_frames.shape) == 2:
+                reference_frames = reference_frames[None, :, :]
+            return self.registration_obj.register_frames_and_transfer(frames, reference_frames)

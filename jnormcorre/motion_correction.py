@@ -49,7 +49,7 @@ class FrameCorrector:
             min_mov (float): The minimum value of the movie, if known.
             batching (int): Specifies how many frames we register at a time. Toggle this to avoid GPU OOM errors.
         """
-        self.template = template
+        self._template = template
         self.max_shifts = max_shifts
         self.upsample_factor_fft = 10
 
@@ -145,6 +145,13 @@ class FrameCorrector:
 
         self.jitted_transfer_pwrigid_method = simplified_pwrigid_transfer_registration_func
 
+    @property
+    def template(self) -> np.ndarray:
+        return self._template
+
+    @template.setter
+    def template(self, new_template):
+        self._template = new_template
 
     def register_frames(self, frames: np.ndarray, pw_rigid: bool = False) -> np.ndarray:
         """
