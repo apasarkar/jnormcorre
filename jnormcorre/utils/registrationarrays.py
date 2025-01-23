@@ -8,7 +8,8 @@ from typing import *
 class FilteredArray(lazy_data_loader):
     def __init__(self,
                  raw_data_loader: lazy_data_loader,
-                 filter_function: Callable):
+                 filter_function: Callable,
+                 batching: int = 100):
         """
         Class for loading and filtering data; this is broadly useful because we often want to spatially filter
         data to expose salient signals. We use this filtered version of the data to estimate shifts
@@ -20,10 +21,13 @@ class FilteredArray(lazy_data_loader):
                 filter_function (Callable): A function that applies a spatial filter to every frame of a data array. It takes
                     an input movie of shape (frames, fov dim 1, fov dim 2) and returns a
                     filtered movie of the same shape. The type of the output is cast to numpy array in this function.
+
+                batching (int): Max number of frames we process on GPU at a time, used to avoid OOM errors.
         """
 
         self._raw_data_loader = raw_data_loader
         self._filter = filter_function
+        self._batching = batching
 
     @property
     def raw_data_loader(self) -> lazy_data_loader:
@@ -32,6 +36,14 @@ class FilteredArray(lazy_data_loader):
     @property
     def filter_function(self) -> Callable:
         return self._filter
+
+    @property
+    def batching(self):
+        return self._batching
+
+    @batching.setter
+    def batching(self, new_batch: int):
+        self._batching = new_batch
 
     @property
     def dtype(self) -> str:
@@ -73,9 +85,18 @@ class FilteredArray(lazy_data_loader):
         frames = self.raw_data_loader[indices]
         if frames.ndim == 2:
             frames = frames[None, :, :]
-        return np.array(self.filter_function(frames))
+        if frames.shape[0] <= self.batching:
+            return np.array(self.filter_function(frames))
+        else:
+            print(f"we are in new batching logic, the batch size is {self.batching}")
+            batches = list(range(0, frames.shape[0], self.batching))
+            output = np.zeros_like(frames)
+            for k in range(len(batches)):
+                start = batches[k]
+                end = min(frames.shape[0], start + self.batching)
+                output[start:end] = np.array(self.filter_function(frames[start:end]))
 
-
+            return output
 
 
 class TiffArray(lazy_data_loader):
