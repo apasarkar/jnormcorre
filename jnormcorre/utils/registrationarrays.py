@@ -5,11 +5,14 @@ import numpy as np
 import h5py
 from typing import *
 
+
 class FilteredArray(lazy_data_loader):
-    def __init__(self,
-                 raw_data_loader: lazy_data_loader,
-                 filter_function: Callable,
-                 batching: int = 100):
+    def __init__(
+        self,
+        raw_data_loader: lazy_data_loader,
+        filter_function: Callable,
+        batching: int = 100,
+    ):
         """
         Class for loading and filtering data; this is broadly useful because we often want to spatially filter
         data to expose salient signals. We use this filtered version of the data to estimate shifts
@@ -65,7 +68,6 @@ class FilteredArray(lazy_data_loader):
         Number of dimensions
         """
         return len(self.shape)
-
 
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         """
@@ -225,7 +227,7 @@ class RegistrationArray(lazy_data_loader):
         registration_obj: jnormcorre.motion_correction.FrameCorrector,
         data_to_register: jnormcorre.utils.lazy_array.lazy_data_loader,
         pw_rigid=False,
-        reference_data: Optional[jnormcorre.utils.lazy_array.lazy_data_loader] = None
+        reference_data: Optional[jnormcorre.utils.lazy_array.lazy_data_loader] = None,
     ):
         """
         Class for registering 2D functional imaging data on the fly. Useful for visualization libraries etc.
@@ -241,7 +243,9 @@ class RegistrationArray(lazy_data_loader):
         self.data_loader = data_to_register
         if self.reference_data is not None:
             if not (self.reference_data.shape == self.data_loader.shape):
-                raise ValueError(f"The data to register and the reference data stack do not have the same shape.")
+                raise ValueError(
+                    f"The data to register and the reference data stack do not have the same shape."
+                )
         self.registration_obj = registration_obj
         self._pw_rigid = pw_rigid
         # Verify that the data and registration info align properly
@@ -296,4 +300,6 @@ class RegistrationArray(lazy_data_loader):
             reference_frames = self.reference_data[indices, :, :]
             if len(reference_frames.shape) == 2:
                 reference_frames = reference_frames[None, :, :]
-            return self.registration_obj.register_frames_and_transfer(frames, reference_frames)
+            return self.registration_obj.register_frames_and_transfer(
+                frames, reference_frames
+            )

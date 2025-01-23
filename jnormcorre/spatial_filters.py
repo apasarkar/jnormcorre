@@ -29,7 +29,9 @@ def compute_highpass_filter_kernel(gaussian_sigma: list[int]):
     return ker2D
 
 
-def compute_gaussian_kernel(sigma_x: float, sigma_y: float, size: Optional[tuple]=None):
+def compute_gaussian_kernel(
+    sigma_x: float, sigma_y: float, size: Optional[tuple] = None
+):
     """
     Constructs a Gaussian kernel for image convolution.
 
@@ -50,8 +52,8 @@ def compute_gaussian_kernel(sigma_x: float, sigma_y: float, size: Optional[tuple
         size_x, size_y = size
 
     # Ensure the kernel size is odd
-    size_x += (size_x % 2 == 0)
-    size_y += (size_y % 2 == 0)
+    size_x += size_x % 2 == 0
+    size_y += size_y % 2 == 0
 
     # Create grid for the kernel
     x = np.linspace(-(size_x // 2), size_x // 2, size_x)
@@ -59,12 +61,13 @@ def compute_gaussian_kernel(sigma_x: float, sigma_y: float, size: Optional[tuple
     x, y = np.meshgrid(x, y)
 
     # Compute the Gaussian function
-    kernel = np.exp(-(x ** 2 / (2 * sigma_x ** 2) + y ** 2 / (2 * sigma_y ** 2)))
+    kernel = np.exp(-(x**2 / (2 * sigma_x**2) + y**2 / (2 * sigma_y**2)))
 
     # Normalize the kernel
     kernel /= np.sum(kernel)
 
     return kernel
+
 
 def _convolution_image_filter(img: np.ndarray, kernel: np.ndarray):
     """
@@ -75,12 +78,17 @@ def _convolution_image_filter(img: np.ndarray, kernel: np.ndarray):
     Returns:
         filtered_img (np.ndarray): Shape (fov dim 1, fov dim 2).
     """
-    img_padded = jnp.pad(img,
-                         (((kernel.shape[0]) // 2, (kernel.shape[0]) // 2),
-                          ((kernel.shape[1]) // 2, (kernel.shape[1]) // 2)),
-                         mode='reflect')
+    img_padded = jnp.pad(
+        img,
+        (
+            ((kernel.shape[0]) // 2, (kernel.shape[0]) // 2),
+            ((kernel.shape[1]) // 2, (kernel.shape[1]) // 2),
+        ),
+        mode="reflect",
+    )
     filtered_frame = jax.scipy.signal.convolve(img_padded, kernel, mode="valid")
     return filtered_frame
+
 
 convolution_image_filter = jit(_convolution_image_filter)
 convolution_image_filter_batch = jit(vmap(_convolution_image_filter, in_axes=(0, None)))
