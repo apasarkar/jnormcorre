@@ -90,7 +90,6 @@ class FilteredArray(lazy_data_loader):
         if frames.shape[0] <= self.batching:
             return np.array(self.filter_function(frames))
         else:
-            print(f"we are in new batching logic, the batch size is {self.batching}")
             batches = list(range(0, frames.shape[0], self.batching))
             output = np.zeros_like(frames)
             for k in range(len(batches)):
