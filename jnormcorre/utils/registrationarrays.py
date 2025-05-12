@@ -69,6 +69,13 @@ class FilteredArray(lazy_data_loader):
         """
         return len(self.shape)
 
+    @property
+    def xy_location(self) -> bool:
+        """
+        Boolean if saving xy_location.
+        """
+        return False
+
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         """
         Lazy computation logic goes here to return frames. Slices the array over time (dimension 0) at the desired indices.
@@ -140,6 +147,13 @@ class TiffArray(lazy_data_loader):
         """
         return len(self.shape)
 
+    @property
+    def xy_location(self) -> bool:
+        """
+        Boolean if saving xy_location.
+        """
+        return False
+
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         if isinstance(indices, int):
             data = tifffile.imread(self.filename, key=[indices]).squeeze()
@@ -199,6 +213,13 @@ class Hdf5Array(lazy_data_loader):
             Number of dimensions
         """
         return len(self.shape)
+
+    @property
+    def xy_location(self) -> bool:
+        """
+        Boolean if saving xy_location.
+        """
+        return False
 
     def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
         with h5py.File(self.filename, "r") as file:
@@ -270,6 +291,10 @@ class RegistrationArray(lazy_data_loader):
         return self.data_loader.ndim
 
     @property
+    def xy_location(self) -> bool:
+        return True
+
+    @property
     def batching(self):
         return self.registration_obj.batching
 
@@ -284,7 +309,7 @@ class RegistrationArray(lazy_data_loader):
         """
         return self.registration_obj.template
 
-    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
+    def _compute_at_indices(self, indices: Union[list, int, slice]) -> Tuple[np.ndarray, np.ndarray]:
         # Use data loader to load the frames
         frames = self.data_loader[indices, :, :]
         if len(frames.shape) == 2:  # This means we loaded 1 frame only
@@ -292,13 +317,17 @@ class RegistrationArray(lazy_data_loader):
 
         # Register the data
         if self.reference_data is None:
-            return self.registration_obj.register_frames(
+            output = self.registration_obj.register_frames(
                 frames, pw_rigid=self._pw_rigid
-            ).squeeze()
+            )
+            
+            return output[0].squeeze(), output[1]
         else:
             reference_frames = self.reference_data[indices, :, :]
             if len(reference_frames.shape) == 2:
                 reference_frames = reference_frames[None, :, :]
-            return self.registration_obj.register_frames_and_transfer(
+            output = self.registration_obj.register_frames_and_transfer(
                 frames, reference_frames
             )
+        
+        return output[0], output[1]

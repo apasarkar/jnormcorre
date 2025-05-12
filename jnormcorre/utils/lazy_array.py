@@ -34,6 +34,13 @@ class lazy_data_loader(ABC):
         Number of dimensions
         """
         return len(self.shape)
+    
+    @property
+    def xy_location(self) -> bool:
+        """
+        Boolean if saving xy_location.
+        """
+        pass
 
     def __getitem__(
         self,
@@ -100,7 +107,10 @@ class lazy_data_loader(ABC):
             )
 
         # Step 3: Now slice the data with frame_indexer (careful: if the ndims has shrunk, add a dim)
-        frames = self._compute_at_indices(frame_indexer)
+        if self.xy_location:
+            frames, xy_translation = self._compute_at_indices(frame_indexer)
+        else:
+            frames = self._compute_at_indices(frame_indexer)
         if len(frames.shape) < len(self.shape):
             frames = np.expand_dims(frames, axis=0)
 
@@ -111,10 +121,13 @@ class lazy_data_loader(ABC):
             elif len(item) == 3:
                 frames = frames[:, item[1], item[2]]
 
-        return frames.squeeze()
+        if self.xy_location:
+            return frames.squeeze(), xy_translation
+        else:
+            return frames.squeeze()
 
     @abstractmethod
-    def _compute_at_indices(self, indices: Union[list, int, slice]) -> np.ndarray:
+    def _compute_at_indices(self, indices: Union[list, int, slice]):
         """
         Lazy computation logic goes here to return frames. Slices the array over time (dimension 0) at the desired indices.
 
@@ -128,5 +141,7 @@ class lazy_data_loader(ABC):
         -------
         np.ndarray
             array at the indexed slice
+        np.ndarray
+            xy translation (optional)
         """
         pass

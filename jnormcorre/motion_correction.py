@@ -72,8 +72,8 @@ class FrameCorrector:
             static_argnums=(2, 3, 4, 5, 7),
         )
 
-        def simplified_registration_func_pw(frames: np.ndarray) -> ArrayLike:
-            return self.pw_registration_method(
+        def simplified_registration_func_pw(frames: np.ndarray) -> tuple[ArrayLike, ArrayLike]:
+            output = self.pw_registration_method(
                 frames,
                 self.template,
                 self.strides[0],
@@ -84,7 +84,9 @@ class FrameCorrector:
                 self.upsample_factor_fft,
                 self.max_deviation_rigid,
                 self.add_to_movie,
-            )[0]
+            )
+
+            return output[0], output[1]
 
         self.jitted_pwrigid_method = simplified_registration_func_pw
 
@@ -93,10 +95,12 @@ class FrameCorrector:
             vmap(_register_to_template_rigid, in_axes=(0, None, None, None))
         )
 
-        def simplified_registration_func_rig(frames: np.ndarray) -> ArrayLike:
-            return self.rigid_registration_method(
+        def simplified_registration_func_rig(frames: np.ndarray) -> tuple[ArrayLike, ArrayLike]:
+            output = self.rigid_registration_method(
                 frames, self.template, self.max_shifts, self.add_to_movie
-            )[0]
+            )
+        
+            return output[0], output[1]
 
         self.jitted_rigid_method = simplified_registration_func_rig
 
@@ -110,14 +114,16 @@ class FrameCorrector:
 
         def simplified_rigid_transfer_registration_func(
             frames_to_register: np.ndarray, reference_frames: np.ndarray
-        ) -> ArrayLike:
-            return self.rigid_transfer_registration_method(
+        ) -> tuple[ArrayLike, ArrayLike]:
+            output = self.rigid_transfer_registration_method(
                 frames_to_register,
                 reference_frames,
                 self.template,
                 self.max_shifts,
                 self.add_to_movie,
-            )[0]
+            )
+        
+            return output[0], output[1]
 
         self.jitted_transfer_rigid_method = simplified_rigid_transfer_registration_func
 
@@ -132,8 +138,8 @@ class FrameCorrector:
 
         def simplified_pwrigid_transfer_registration_func(
             frames_to_register: np.ndarray, reference_frames: np.ndarray
-        ) -> ArrayLike:
-            return self.pwrigid_transfer_registration_method(
+        ) -> tuple[ArrayLike, ArrayLike]:
+            output = self.pwrigid_transfer_registration_method(
                 frames_to_register,
                 reference_frames,
                 self.template,
@@ -145,7 +151,9 @@ class FrameCorrector:
                 self.upsample_factor_fft,
                 self.max_deviation_rigid,
                 self.add_to_movie,
-            )[0]
+            )
+        
+            return output[0], output[1]
 
         self.jitted_transfer_pwrigid_method = (
             simplified_pwrigid_transfer_registration_func
@@ -169,8 +177,18 @@ class FrameCorrector:
 
         Returns:
             corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
+            xy_translation (np.array): Dimensions (T, num_tiles, 2). XY translation. num_tiles = 1 for rigid method.
         """
         output = np.zeros_like(frames)
+        if pw_rigid:
+            sum_0 = output.shape[1] - self.strides[0] - self.overlaps[0]
+            sum_1 = output.shape[2] - self.strides[1] - self.overlaps[1]
+            comp_a = sum_0 // self.strides[0] + 1 + (sum_0 % self.strides[0] > 0)
+            comp_b = sum_1 // self.strides[1]  + 1 + (sum_1 % self.strides[1] > 0)
+            n_tiles = comp_a * comp_b
+            xy_translation = np.zeros(((output.shape[0], n_tiles, 2)))
+        else:
+            xy_translation = np.zeros(((output.shape[0], 2)))
         batches = list(range(0, output.shape[0], self.batching))
         if len(batches) > 1:
             batches[-1] = output.shape[0] - self.batching
@@ -181,10 +199,20 @@ class FrameCorrector:
         for start in batches:
             end_point = min(start + self.batching, output.shape[0])
             output[start:end_point, :, :] = np.array(
-                used_callable(frames[start:end_point, :, :])
+                used_callable(frames[start:end_point, :, :])[0]
             )
-
-        return output
+            if pw_rigid:
+                xy_translation[start:end_point, :, :] = np.array(
+                    used_callable(frames[start:end_point, :, :])[1]
+                )
+            else:
+                xy_translation[start:end_point, :] = np.array(
+                    used_callable(frames[start:end_point, :, :])[1]
+                )
+        if pw_rigid:
+            return output, xy_translation
+        else:
+            return output, xy_translation[:, np.newaxis, :]
 
     def register_frames_and_transfer(
         self,
@@ -202,6 +230,7 @@ class FrameCorrector:
 
         Returns:
             corrected_frames (np.array): Dimensions (T, d1, d2). The registered output from the input (frames)
+            xy_translation (np.array): Dimensions (T, num_tiles, 2). XY translation. num_tiles = 1 for rigid method.
         """
         if not (target_frames.shape == reference_frames.shape):
             raise ValueError(
@@ -209,6 +238,15 @@ class FrameCorrector:
                 f"{reference_frames.shape}"
             )
         output = np.zeros_like(target_frames)
+        if pw_rigid:
+            sum_0 = output.shape[1] - self.strides[0] - self.overlaps[0]
+            sum_1 = output.shape[2] - self.strides[1] - self.overlaps[1]
+            comp_a = sum_0 // self.strides[0] + 1 + (sum_0 % self.strides[0] > 0)
+            comp_b = sum_1 // self.strides[1]  + 1 + (sum_1 % self.strides[1] > 0)
+            n_tiles = comp_a * comp_b
+            xy_translation = np.zeros(((output.shape[0], n_tiles, 2)))
+        else:
+            xy_translation = np.zeros(((output.shape[0], 2)))
         batches = list(range(0, output.shape[0], self.batching))
         if len(batches) > 1:
             batches[-1] = output.shape[0] - self.batching
@@ -224,10 +262,28 @@ class FrameCorrector:
                 used_callable(
                     target_frames[start:end_point, :, :],
                     reference_frames[start:end_point, :, :],
-                )
+                )[0]
             )
+            if pw_rigid:
+                xy_translation[start:end_point, :, :] = np.array(
+                    used_callable(
+                        target_frames[start:end_point, :, :],
+                        reference_frames[start:end_point, :, :],
+                    )[1]
+                )
+            else:
+                xy_translation[start:end_point, :] = np.array(
+                    used_callable(
+                        target_frames[start:end_point, :, :],
+                        reference_frames[start:end_point, :, :],
+                    )[1]
+                )
 
-        return output
+
+        if pw_rigid:
+            return output, xy_translation
+        else:
+            return output, xy_translation[:, np.newaxis, :]
 
     @property
     def batching(self):
